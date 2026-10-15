@@ -1,5 +1,5 @@
 {
-  "root": "smap",
+  "startFocus": "smap",
   "boxes": {
     "smap":    { "label": "smap", "summary": "Compiles a codebase into a zoomable map", "side": "in",
                  "axes": "left → right = compile stages (source → IR → map → pixels), up = LLM, down = on-disk state",
@@ -40,6 +40,6 @@
     { "id": "s12", "from": "skeleton", "to": "claude" },
     { "id": "s13", "from": "refine",   "to": "claude" },
     { "id": "s14", "from": "compile",  "to": "ir" },
-    { "id": "s15", "from": "view",     "to": "ir" }
+    { "id": "s15", "from": "ir",       "to": "view",     "label": "MapDoc" }
   ]
 }

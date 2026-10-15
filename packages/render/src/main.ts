@@ -1,23 +1,74 @@
 import * as d3 from "d3";
 import type { MapDoc } from "@smap/ir";
+import { arrange } from "./arrange";
+import { createRenderer } from "./draw";
+import { ancestors, indexDoc } from "./model";
+import { deriveView, type ViewState } from "./view";
 
 // Pick a fixture with ?fixture=<name> (default: app).
 const fixtures = import.meta.glob<MapDoc>("../../../fixtures/*.json", { eager: true, import: "default" });
 const byName = Object.fromEntries(
   Object.entries(fixtures).map(([path, doc]) => [path.split("/").pop()!.replace(/\.json$/, ""), doc]),
 );
-const name = new URLSearchParams(location.search).get("fixture") ?? "app";
-const doc = byName[name];
-if (!doc) throw new Error(`unknown fixture "${name}"; have: ${Object.keys(byName).join(", ")}`);
+const fixtureName = new URLSearchParams(location.search).get("fixture") ?? "app";
+const doc: MapDoc = (() => {
+  const found = byName[fixtureName];
+  if (!found) throw new Error(`unknown fixture "${fixtureName}"; have: ${Object.keys(byName).join(", ")}`);
+  return found;
+})();
+const ix = indexDoc(doc);
 
-// Placeholder: smoke-test the toolchain with a keyed D3 join over box ids.
-// Layout and real rendering come next.
-const boxes = Object.entries(doc.boxes).map(([id, box]) => ({ id, ...box }));
+// Dev-only fixture switcher; switching starts the new map at its start focus.
+d3.select<HTMLSelectElement, unknown>("#fixture")
+  .on("change", (ev: Event) => {
+    location.href = `?fixture=${encodeURIComponent((ev.target as HTMLSelectElement).value)}`;
+  })
+  .selectAll("option")
+  .data(Object.keys(byName).sort())
+  .join("option")
+  .attr("value", (n) => n)
+  .property("selected", (n) => n === fixtureName)
+  .text((n) => n);
 
-d3.select<SVGSVGElement, unknown>("#map")
-  .selectAll("text")
-  .data(boxes, (d) => (d as { id: string }).id)
-  .join("text")
-  .attr("x", 20)
-  .attr("y", (_, i) => 30 + i * 22)
-  .text((d) => `${d.id} (${d.side}): ${d.label}`);
+// The focus lives in the URL hash, so reload and browser back/forward work.
+function readState(): ViewState {
+  const id = decodeURIComponent(location.hash.slice(1));
+  return { focus: Object.hasOwn(doc.boxes, id) ? id : doc.startFocus };
+}
+
+function go(id: string) {
+  location.hash = encodeURIComponent(id);
+}
+
+function up() {
+  const { focus } = readState();
+  const target = ix.parent.get(focus) ?? (focus === doc.startFocus ? undefined : doc.startFocus);
+  if (target) go(target);
+}
+
+const render = createRenderer(document.querySelector<SVGSVGElement>("#map")!, { focus: go, up });
+
+function renderCrumbs(focus: string) {
+  const trail = ix.parent.has(focus) || focus === doc.startFocus
+    ? [...ancestors(ix, focus).reverse(), focus]
+    : [doc.startFocus, focus];
+  d3.select("#crumbs")
+    .selectAll("a")
+    .data(trail)
+    .join("a")
+    .text((id) => doc.boxes[id]?.label ?? id)
+    .attr("href", (id) => `#${encodeURIComponent(id)}`)
+    .classed("current", (id) => id === focus);
+}
+
+function update() {
+  const state = readState();
+  render(arrange(ix, deriveView(ix, state)));
+  renderCrumbs(state.focus);
+}
+
+window.addEventListener("hashchange", update);
+window.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape" || ev.key === "Backspace") up();
+});
+update();

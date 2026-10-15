@@ -1,2 +1,23 @@
-html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; }
+/* Placeholder styling: just enough to judge the arrangement. */
+html, body { margin: 0; height: 100%; background: #111316; color: #d8dbe0; font: 13px system-ui, sans-serif; }
 #map { width: 100vw; height: 100vh; display: block; }
+header { position: fixed; top: 10px; left: 16px; display: flex; gap: 14px; align-items: center; }
+#fixture { background: #1c1f24; color: #d8dbe0; border: 1px solid #4a505a; border-radius: 4px; font: inherit; padding: 2px 4px; }
+#crumbs a { color: #8a919c; text-decoration: none; }
+#crumbs a + a::before { content: " › "; color: #555; }
+#crumbs a.current { color: #d8dbe0; }
+
+.box { cursor: pointer; }
+.box rect { fill: #1c1f24; stroke: #4a505a; rx: 4; }
+.box.frame rect { fill: #15171a; stroke: #6a717c; }
+.box.neighbor rect { stroke-dasharray: 4 3; }
+.box text { fill: #d8dbe0; dominant-baseline: middle; }
+.box text.meta { fill: #7d8590; font-size: 11px; }
+.box.frame text.label { font-weight: 600; }
+
+.edges path { fill: none; stroke: #7d8590; stroke-width: 1.25; }
+#arrow path { fill: #7d8590; }
+.edge-labels text {
+  fill: #9aa2ad; font-size: 11px; dominant-baseline: middle;
+  paint-order: stroke; stroke: #111316; stroke-width: 4px;
+}

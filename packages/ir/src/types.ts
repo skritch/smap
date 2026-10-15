@@ -20,7 +20,8 @@ export interface Edge {
 }
 
 export interface MapDoc {
-  root: string;
+  /** Box the view opens on. The renderer tracks the live focus separately. */
+  startFocus: string;
   boxes: Record<string, Box>;
   edges: Edge[];
 }

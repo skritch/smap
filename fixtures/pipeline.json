@@ -1,5 +1,5 @@
 {
-  "root": "pipeline",
+  "startFocus": "pipeline",
   "boxes": {
     "pipeline":  { "label": "Churn pipeline", "summary": "Nightly batch DAG from raw events to churn scores", "side": "in",
                    "axes": "left → right = dataflow, up = alerting, down = config and ad-hoc reads",

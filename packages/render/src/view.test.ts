@@ -46,6 +46,11 @@ describe("deriveView", () => {
     expect(pair[0]!.both).toBe(true);
   });
 
+  it("shows only connected context around a top-level box other than the start", () => {
+    const v = deriveView(load(pipeline), { focus: "analysis" });
+    expect([...v.neighbors.keys()]).toEqual(["pipeline"]);
+  });
+
   it("shows upstream and downstream stages around a nested focus", () => {
     const v = deriveView(load(pipeline), { focus: "clean" });
     expect(v.neighbors.get("ingest")).toBe("left");

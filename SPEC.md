@@ -154,7 +154,7 @@ The HTTP server counts as external in the runtime view: once the app exists, the
 Open questions:
 - Grouping similar neighbors (several alerting sinks → one "Alerting" box) probably means letting external boxes have children.
 - Exact ID scheme.
-- On-disk location and format (e.g. a `.codemap/` directory).
+- On-disk layout beyond the map itself. For now the map lives at `.codemap/map.json` in the target repo.
 
 ### 2.2 Rendering
 
@@ -162,6 +162,10 @@ Open questions:
 - Pipeline: `MapDoc` + view state (current focus, selection) → visible set → layout → keyed D3 joins.
 - **Focus model:** the focused box is drawn as a frame with its children inside. Context is siblings of the focus and of its ancestors, shown only if an edge connects them to the frame (top-level neighbors always show). Each one sits on the side it occupied one level up, so zooming into Routing puts Business logic to its right.
 - **Edges:** lifted to the nearest visible box and merged. Opposite pairs become one double-ended arrow.
+  - Neighbors on the same side keep the edges between them, unlabeled. They are offset outward by flow order, so upstream sits further out.
+  - Straight unless a box is in the way; curved around obstacles otherwise.
+  - Edge ends sharing a side of a box are spread a little apart, so parallel inputs read as parallel lines.
+  - Data edges enter a box from the side the flow mapping says (§1.4), routing around boxes in the way rather than switching sides.
 - **Ambient boxes:** the compiler decides what is ambient (a judgment about meaning). The renderer decides how to summarize it (a drawing decision), and the map keeps the real edges either way.
   - Inside the frame, ambient boxes are chips in the header, with no drawn edges. Zooming into a child drops the chip: you are inside its scope, so it is not context.
   - Outside the frame, all their edges collapse into one edge to the frame.
@@ -169,7 +173,8 @@ Open questions:
   - Config is ambient inside the app: it is injected and becomes ambient state. The startup flow, where config instantiates the app, belongs to a separate lifecycle view.
 - **External and ambient boxes** are selected, not zoomed: clicking one highlights the visible boxes that connect to it and dims the rest. The layout doesn't move. Finding the exact file is done by zooming in. Later, selecting might rearrange the interior to bring the connected subcomponents forward.
 - **Detail budget:** decided by the renderer, not the LLM. Aim for roughly 5–8 things per view. Today: edge labels drop out when a view has more than 8 edges. Later: collapse the rest into groups the renderer makes. Only those groups show a count ("+N"). A box with children is an abstraction, and its contents are not counted or hinted at.
-- **Transitions:** keyed by stable IDs, D3-style enter/update/exit, so zooming and edits animate rather than redraw. Focus changes are discrete steps with animated transitions.
+- **Transitions:** keyed by stable IDs, D3-style enter/update/exit, so zooming and edits animate rather than redraw. Focus changes are discrete steps with animated transitions. Boxes and edges appearing or disappearing travel with their parent box (shrinking into it, growing out of it), like a camera move.
+- **Navigation:** click a box to zoom in. Click the frame, empty background, or the breadcrumbs, or press Esc, to zoom out.
 - **Layout:** our own simple layered layout, deterministic given the IR.
   - Children are placed left → right by dataflow and reordered to reduce crossings.
   - Edges that skip a column get their own lane.
@@ -216,6 +221,8 @@ Deterministic glue:
 
 Refinement is **lazy**: run eagerly to about depth 2, then on demand as the user zooms.
 
+The first version (M2) skips all of this. A single large-model call goes from file tree, README, manifests and entrypoint heads straight to a 2-level map. The point is to get a loop going (compile, look, change the prompt) before building the full workflow.
+
 Open questions:
 - How the skeleton pass determines the project's basic shape (app vs. pipeline vs. multi-process system) and chooses directional semantics.
 - Prompt design for sides and axes.
@@ -241,6 +248,7 @@ Open questions:
 
 ### 2.8 Evaluation
 
+- This repo first: `fixtures/smap.json` is the hand-drawn target.
 - 2–3 real repos (from work), each with hand-written "top-level boxes I'd draw".
 - Re-run after prompt changes and compare.
 - Track coverage % alongside.
@@ -252,26 +260,28 @@ Open questions:
 **M0: Dummy map.** *(done)*
 Render a hand-written fixture JSON (§2.1) in the browser: boxes, edges, sides. Click a box to make it the focus; go back up.
 
-**M1: Navigation feel.** *(in progress)*
-- Focus + context: neighbors projected to frame sides. *(done)*
-- Stable-ID-keyed animated transitions. *(done)*
+**M1: Navigation feel.** *(mostly done)*
+- Focus + context, neighbors on frame sides, edges between neighbors. *(done)*
+- Animated transitions keyed by stable IDs, with children carried by their parent. *(done)*
 - Stable layout. *(done, by construction)*
-- Selecting external boxes. *(done)*
+- External and ambient boxes, selection. *(done)*
 - Visual styling pass.
 - Click → open file (e.g. a `vscode://file/...` link).
 
-Iterate on the fixture until navigating it *feels* right.
+The last two can happen alongside M2. Iterate on the fixtures until navigating *feels* right.
 
-**M2: Ingest + digests.**
-- CLI reads a repo: file list, hashes, cheap symbols, string index.
+**M2: Dumb end-to-end.** *(next)*
+The goal is a fast loop on real code: compile, look, change the prompt, recompile. Deliberately crude.
+1. **Map validator** in `packages/ir`: shape, references, single parent, externals have no children. The renderer shows validation errors instead of crashing.
+2. **Single-call compile** in `packages/compile`: a CLI that reads the file tree (respecting `.gitignore`), README, manifests and entrypoint heads. One structured Claude call returns a full 2-level map: boxes, sides, axes, edges, external and ambient flags. It writes `.codemap/map.json`. No digests, caching or source map yet.
+3. **Renderer loads a compiled map** (e.g. `?map=` or listed beside the fixtures).
+4. **First eval:** compile this repo and compare with `fixtures/smap.json`. Then one work repo.
+
+**M3: Real ingest + skeleton.**
+- Ingest: file list, hashes, cheap symbols, string index (§2.3).
 - Per-file digests via a small model, cached.
-- Dump to disk and inspect.
-
-**M3: Skeleton pass.**
-- First real map from a real repo: top-level boxes, sides, edges, assignment.
-- Coverage repair and a visible unassigned bucket.
-- Rendered in the M1 viewer.
-- Start the eval set.
+- Skeleton pass on digests, with coverage repair and a visible unassigned bucket.
+- Grow the eval set.
 
 **M4: Lazy refinement.**
 - Zooming into an unexpanded box triggers the refine pass.

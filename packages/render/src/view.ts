@@ -97,12 +97,12 @@ export function deriveView(ix: Index, state: ViewState): View {
     ve.origins.push([e.from, e.to]);
   }
 
-  // Show context that connects to the frame. Top-level neighbors are declared
-  // context, so they show at top level even when unconnected.
+  // Show context that connects to the frame. The start focus's neighbors are
+  // declared context, so they show there even when unconnected.
   const connected = new Set([...edges.values()].flatMap((e) => [e.from, e.to]));
-  const atTop = !ix.parent.has(focus);
+  const atStart = focus === ix.doc.startFocus;
   const neighbors = new Map(
-    [...frontier].filter(([id]) => connected.has(id) || (atTop && !ix.parent.has(id))),
+    [...frontier].filter(([id]) => connected.has(id) || (atStart && !ix.parent.has(id))),
   );
 
   // Neighbors stacked on the same side keep the edges between them, so their

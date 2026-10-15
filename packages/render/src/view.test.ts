@@ -112,6 +112,12 @@ describe("layoutInterior", () => {
     expect(xOrder(smap, "compile")).toEqual(["ingest", "digest", "skeleton", "refine"]);
   });
 
+  it("keeps a chain of stages on one straight line", () => {
+    const { rects } = layoutInterior(load(pipeline), "pipeline");
+    const ys = ["ingest", "clean", "transform", "model", "publish"].map((id) => rects.get(id)!.y);
+    expect(new Set(ys).size).toBe(1);
+  });
+
   it("gives edges that skip layers a lane clear of the boxes they pass", () => {
     const { rects, bends } = layoutInterior(load(pipeline), "pipeline");
     const [lane] = bends.get("ingest->transform") ?? [];
@@ -150,6 +156,15 @@ describe("arrange", () => {
     expect(labelled(pipeline, "pipeline")).toBe(false);
     expect(labelled(pipeline, "clean")).toBe(true);
     expect(labelled(app, "app")).toBe(true);
+  });
+
+  it("draws edges between neighbors on one side and staggers them by flow", () => {
+    const ix = load(pipeline);
+    expect(deriveView(ix, { focus: "ingest" }).edges.some((e) => e.key === "clean->transform")).toBe(true);
+    const v = deriveView(ix, { focus: "transform" });
+    expect(v.edges.some((e) => e.key === "ingest->clean")).toBe(true);
+    const rects = new Map(arrange(ix, v).boxes.map((b) => [b.id, b.rect]));
+    expect(rects.get("ingest")!.x).toBeLessThan(rects.get("clean")!.x);
   });
 
   it("lines neighbors up with the boxes they connect to", () => {

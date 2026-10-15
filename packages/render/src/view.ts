@@ -73,6 +73,8 @@ export function deriveView(ix: Index, state: ViewState): View {
 
   const edges = new Map<string, ViewEdge>();
   const ambientEdges = new Map<string, ViewEdge>();
+  // Edges between two context boxes; drawn only between neighbors on one side.
+  const outer = new Map<string, ViewEdge>();
   for (const e of ix.doc.edges) {
     let from = lift(e.from);
     let to = lift(e.to);
@@ -82,12 +84,32 @@ export function deriveView(ix: Index, state: ViewState): View {
     // Edges to an ambient box outside the frame collapse onto the frame.
     if (isAmbient(ix, to) && frontier.has(to) && inside(from)) from = focus;
     if (isAmbient(ix, from) && frontier.has(from) && inside(to)) to = focus;
-    if (from === to || (!inside(from) && !inside(to) && target === edges)) continue;
+    if (from === to) continue;
+    let into = target;
+    if (!inside(from) && !inside(to) && target === edges) {
+      if (isAmbient(ix, from) || isAmbient(ix, to)) continue;
+      into = outer;
+    }
     const key = `${from}->${to}`;
-    let ve = target.get(key);
-    if (!ve) target.set(key, (ve = { key, from, to, labels: [], origins: [] }));
+    let ve = into.get(key);
+    if (!ve) into.set(key, (ve = { key, from, to, labels: [], origins: [] }));
     if (e.label && !ve.labels.includes(e.label)) ve.labels.push(e.label);
     ve.origins.push([e.from, e.to]);
+  }
+
+  // Show context that connects to the frame. Top-level neighbors are declared
+  // context, so they show at top level even when unconnected.
+  const connected = new Set([...edges.values()].flatMap((e) => [e.from, e.to]));
+  const atTop = !ix.parent.has(focus);
+  const neighbors = new Map(
+    [...frontier].filter(([id]) => connected.has(id) || (atTop && !ix.parent.has(id))),
+  );
+
+  // Neighbors stacked on the same side keep the edges between them, so their
+  // order (ingest before clean) stays visible.
+  for (const ve of outer.values()) {
+    const side = neighbors.get(ve.from);
+    if (side && side === neighbors.get(ve.to)) edges.set(ve.key, ve);
   }
 
   // A pair of opposite edges becomes one double-ended edge.
@@ -99,14 +121,6 @@ export function deriveView(ix: Index, state: ViewState): View {
     ve.origins.push(...back.origins);
     for (const l of back.labels) if (!ve.labels.includes(l)) ve.labels.push(l);
   }
-
-  // Show context that connects to the frame. Top-level neighbors are declared
-  // context, so they show at top level even when unconnected.
-  const connected = new Set([...edges.values()].flatMap((e) => [e.from, e.to]));
-  const atTop = !ix.parent.has(focus);
-  const neighbors = new Map(
-    [...frontier].filter(([id]) => connected.has(id) || (atTop && !ix.parent.has(id))),
-  );
 
   const view: View = { focus, children, chips, neighbors, edges: [...edges.values()] };
   const sel = state.selected;

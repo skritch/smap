@@ -19,7 +19,7 @@ header { position: fixed; top: 10px; left: 16px; display: flex; gap: 14px; align
 .box text.axes { fill: #7d8590; font-size: 11px; }
 .box.frame text.label { font-weight: 600; }
 
-.edges path { fill: none; stroke: #7d8590; stroke-width: 1.25; }
+.edges path { fill: none; stroke: #7d8590; stroke-width: 1.25; vector-effect: non-scaling-stroke; }
 .edges path.related { stroke: #c9d1d9; stroke-width: 1.75; }
 #arrow path { fill: #7d8590; }
 .edge-labels text {

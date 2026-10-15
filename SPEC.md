@@ -32,6 +32,7 @@ Spatial directions carry meaning, like mapping data dimensions to x, y and color
 - **Web app:** left = toward the user (server, internet); right = toward backend systems (external APIs); down = toward persistence (DB, filesystem).
 - **Data pipeline:** left→right = dataflow (sources → DAG of grouped stages → outputs, with possible recursive edges); up = alerting; down = side reads and writes of config and metadata.
 - A component's **interior dimensions need not match its exterior ones.**
+- **The side an edge enters a box carries meaning too.** If left→right is dataflow, an edge entering from the left is a data input, so parallel inputs arrive as parallel lines on the left side. Edges entering from above or below are side reads, alerting, and so on. Edge routing should respect the mapping rather than take the geometrically shortest side.
 
 ### 1.5 Other dimensions of the space
 

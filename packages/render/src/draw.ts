@@ -36,11 +36,27 @@ export function createRenderer(svgEl: SVGSVGElement, on: Handlers): (scene: Scen
   const nodeLayer = svg.append("g").attr("class", "nodes");
   const labelLayer = svg.append("g").attr("class", "edge-labels");
   let prev = new Map<string, SceneBox>();
+  let prevFocus: string | undefined;
   let first = true;
 
   return (scene) => {
     const t = d3.transition().duration(first ? 0 : DURATION);
-    const ids = new Set(scene.boxes.map((b) => b.id));
+    const now = new Map(scene.boxes.map((b) => [b.id, b]));
+    const ids = new Set(now.keys());
+    // A box entering or leaving with its parent travels with it: it is carried
+    // from (or into) where the parent was (or goes), scaled to match.
+    const enterFrom = (d: SceneBox) => {
+      const was = prev.get(d.id);
+      if (was) return translate(was.rect);
+      const parentWas = d.parent && prev.get(d.parent);
+      const parentNow = d.parent && now.get(d.parent);
+      return parentWas && parentNow ? carry(d.rect, parentNow.rect, parentWas.rect) : translate(d.rect);
+    };
+    const exitTo = (d: SceneBox) => {
+      const parentWas = d.parent && prev.get(d.parent);
+      const parentNow = d.parent && now.get(d.parent);
+      return parentWas && parentNow ? carry(d.rect, parentWas.rect, parentNow.rect) : translate(d.rect);
+    };
     const { x, y, w, h } = scene.bounds;
     svg.transition(t).attr("viewBox", `${x} ${y} ${w} ${h}`);
 
@@ -52,7 +68,7 @@ export function createRenderer(svgEl: SVGSVGElement, on: Handlers): (scene: Scen
           (enter) => {
             const g = enter
               .append("g")
-              .attr("transform", (d) => translate((prev.get(d.id) ?? d).rect))
+              .attr("transform", enterFrom)
               .style("opacity", (d) => (prev.has(d.id) ? 1 : 0))
               .on("click", (ev: MouseEvent, d) => {
                 ev.stopPropagation();
@@ -80,9 +96,12 @@ export function createRenderer(svgEl: SVGSVGElement, on: Handlers): (scene: Scen
           (exit) => {
             // Boxes that moved to the other layer vanish here; the rest fade out.
             exit.filter((d) => ids.has(d.id)).remove();
+            // Raised so a box shrinking into its parent stays on top of it.
             exit
               .filter((d) => !ids.has(d.id))
+              .raise()
               .transition(t)
+              .attr("transform", exitTo)
               .style("opacity", 0)
               .remove();
           },
@@ -117,7 +136,39 @@ export function createRenderer(svgEl: SVGSVGElement, on: Handlers): (scene: Scen
     joinBoxes(frameLayer, scene.boxes.filter((b) => b.role === "frame"));
     joinBoxes(nodeLayer, scene.boxes.filter((b) => b.role !== "frame"));
 
-    edgeLayer
+    // Edges inside a frame travel with it, like its children: leaving edges
+    // ride the old frame to where it goes, arriving ones grow out of where the
+    // new frame was. With nothing to travel with, they leave quickly and
+    // arrive late, so they never hang off boxes that are still moving.
+    const moved = prevFocus !== undefined && prevFocus !== scene.focus;
+    const oldFrameWas = moved ? prev.get(prevFocus!) : undefined;
+    const oldFrameNow = moved ? now.get(prevFocus!) : undefined;
+    const newFrameWas = moved ? prev.get(scene.focus) : undefined;
+    const exitCarry = oldFrameWas && oldFrameNow ? mapRect(oldFrameWas.rect, oldFrameNow.rect) : null;
+    const enterCarry = newFrameWas ? mapRect(now.get(scene.focus)!.rect, newFrameWas.rect) : null;
+    const out = first ? 0 : DURATION / 4;
+    const late = { delay: first ? 0 : DURATION * 0.6, duration: first ? 0 : DURATION * 0.4 };
+    const entering = new Set<string>();
+    const leave = <E extends d3.BaseType>(exit: d3.Selection<E, SceneEdge, SVGGElement, unknown>) => {
+      if (exitCarry) exit.transition(t).attr("transform", exitCarry).style("opacity", 0).remove();
+      else exit.transition().duration(out).style("opacity", 0).remove();
+    };
+    const arrive = <E extends d3.BaseType>(sel: d3.Selection<E, SceneEdge, SVGGElement, unknown>) => {
+      const s = sel.filter((d) => entering.has(d.key));
+      if (enterCarry) {
+        s.attr("transform", enterCarry)
+          .transition(t)
+          .attr("transform", "translate(0,0) scale(1,1)")
+          .style("opacity", (d) => opacity(d.emphasis));
+      } else {
+        s.transition()
+          .delay(late.delay)
+          .duration(late.duration)
+          .style("opacity", (d) => opacity(d.emphasis));
+      }
+    };
+
+    const paths = edgeLayer
       .selectAll<SVGPathElement, SceneEdge>("path")
       .data(scene.edges, (d) => d.key)
       .join(
@@ -126,17 +177,21 @@ export function createRenderer(svgEl: SVGSVGElement, on: Handlers): (scene: Scen
             .append("path")
             .attr("d", (d) => d.d)
             .attr("marker-end", "url(#arrow)")
-            .style("opacity", 0),
+            .style("opacity", 0)
+            .each((d) => entering.add(d.key)),
         (update) => update,
-        (exit) => exit.transition(t).style("opacity", 0).remove(),
+        (exit) => leave(exit),
       )
       .classed("related", (d) => d.emphasis === "related")
-      .attr("marker-start", (d) => (d.both ? "url(#arrow)" : null))
+      .attr("marker-start", (d) => (d.both ? "url(#arrow)" : null));
+    paths
+      .filter((d) => !entering.has(d.key))
       .transition(t)
       .attr("d", (d) => d.d)
       .style("opacity", (d) => opacity(d.emphasis));
+    arrive(paths);
 
-    labelLayer
+    const labels = labelLayer
       .selectAll<SVGTextElement, SceneEdge>("text")
       .data(
         scene.edges.filter((e) => e.label),
@@ -148,18 +203,23 @@ export function createRenderer(svgEl: SVGSVGElement, on: Handlers): (scene: Scen
             .append("text")
             .attr("x", (d) => d.labelAt.x)
             .attr("y", (d) => d.labelAt.y)
-            .style("opacity", 0),
+            .style("opacity", 0)
+            .each((d) => entering.add(d.key)),
         (update) => update,
-        (exit) => exit.transition(t).style("opacity", 0).remove(),
+        (exit) => leave(exit),
       )
       .text((d) => d.label)
-      .attr("text-anchor", (d) => d.labelAnchor)
+      .attr("text-anchor", (d) => d.labelAnchor);
+    labels
+      .filter((d) => !entering.has(d.key))
       .transition(t)
       .attr("x", (d) => d.labelAt.x)
       .attr("y", (d) => d.labelAt.y)
       .style("opacity", (d) => opacity(d.emphasis));
+    arrive(labels);
 
     prev = new Map(scene.boxes.map((b) => [b.id, b]));
+    prevFocus = scene.focus;
     first = false;
   };
 }
@@ -175,6 +235,20 @@ function labelPos(b: SceneBox, el: SVGTextElement): { x: number; y: number } {
 
 function opacity(emphasis: string | undefined): number {
   return emphasis === "dimmed" ? 0.25 : 1;
+}
+
+/** Transform placing `r` (positioned within `from`) inside `to` instead, scaled to fit. */
+function carry(r: Rect, from: Rect, to: Rect): string {
+  const kx = to.w / from.w;
+  const ky = to.h / from.h;
+  return `translate(${to.x + (r.x - from.x) * kx},${to.y + (r.y - from.y) * ky}) scale(${Math.min(kx, ky)})`;
+}
+
+/** Transform moving any point in `from` to the matching point in `to`. */
+function mapRect(from: Rect, to: Rect): string {
+  const kx = to.w / from.w;
+  const ky = to.h / from.h;
+  return `translate(${to.x - from.x * kx},${to.y - from.y * ky}) scale(${kx},${ky})`;
 }
 
 function translate(r: Rect): string {

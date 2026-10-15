@@ -1,4 +1,4 @@
-import { boxSize, labelText, layoutInterior, textWidth, type Dir, type Point, type Rect } from "./geometry";
+import { boxSize, labelText, layoutInterior, pack, textWidth, type Dir, type Point, type Rect } from "./geometry";
 import type { Index } from "./model";
 import type { View, ViewEdge } from "./view";
 
@@ -11,6 +11,7 @@ export interface SceneBox {
   label: string;
   axes?: string;
   external: boolean;
+  parent?: string;
   emphasis?: "selected" | "related" | "dimmed";
 }
 
@@ -28,6 +29,7 @@ export interface SceneEdge {
 
 /** Everything positioned, in frame coordinates (frame top-left at 0,0). */
 export interface Scene {
+  focus: string;
   boxes: SceneBox[];
   edges: SceneEdge[];
   bounds: Rect;
@@ -45,8 +47,18 @@ const LABEL_BUDGET = 8;
 const LABEL_OFFSET = 8;
 const LABEL_LINE = 14;
 const STACK_GAP = 20;
+/** Outward shift per step upstream/downstream among neighbors on one side. */
+const STAGGER = 40;
 const MARGIN = 48;
 const DIRS: Dir[] = ["left", "right", "up", "down"];
+/** Spacing between edge ends sharing one side of a box; wider than an arrowhead. */
+const PORT_GAP = 10;
+/** Furthest a lone edge end moves to stay level with its partner. */
+const ALIGN_REACH = 12;
+/** How close a straight edge may pass to a box it doesn't connect to. */
+const CLEARANCE = 6;
+/** How far a detouring edge passes beyond the boxes it goes around. */
+const LANE_OFFSET = 12;
 const OPPOSITE: Record<Dir, Dir> = { left: "right", right: "left", up: "down", down: "up" };
 
 export function arrange(ix: Index, view: View): Scene {
@@ -95,7 +107,9 @@ export function arrange(ix: Index, view: View): Scene {
     const target = (id: string) => {
       const ps = view.edges
         .filter((e) => e.from === id || e.to === id)
-        .map((e) => center(rects.get(e.from === id ? e.to : e.from)!))
+        .map((e) => (e.from === id ? e.to : e.from))
+        .filter((other) => !view.neighbors.has(other))
+        .map((other) => center(rects.get(other)!))
         .map((c) => (vertical ? c.y : c.x));
       return ps.length ? ps.reduce((s, p) => s + p, 0) / ps.length : (vertical ? fh : fw) / 2;
     };
@@ -108,12 +122,14 @@ export function arrange(ix: Index, view: View): Scene {
       STACK_GAP,
     );
     const colW = Math.max(...sizes.map((s) => s.w));
+    const depth = flowDepth(ids, view.edges, dir);
     ids.forEach((id, i) => {
       const s = sizes[i]!;
       const at = starts[i]!;
-      if (dir === "left") rects.set(id, { x: -gap - colW + (colW - s.w) / 2, y: at, ...s });
-      else if (dir === "right") rects.set(id, { x: fw + gap + (colW - s.w) / 2, y: at, ...s });
-      else rects.set(id, { x: at, y: dir === "up" ? -gap - s.h : fh + gap, ...s });
+      const out = depth.get(id)! * STAGGER;
+      if (dir === "left") rects.set(id, { x: -gap - colW + (colW - s.w) / 2 - out, y: at, ...s });
+      else if (dir === "right") rects.set(id, { x: fw + gap + (colW - s.w) / 2 + out, y: at, ...s });
+      else rects.set(id, { x: at, y: dir === "up" ? -gap - s.h - out : fh + gap + out, ...s });
     });
   }
 
@@ -127,6 +143,7 @@ export function arrange(ix: Index, view: View): Scene {
       label: b?.label ?? id,
       axes: b?.axes,
       external: b?.external ?? false,
+      parent: ix.parent.get(id),
       emphasis: !sel || role === "frame" ? undefined : id === sel.id ? "selected" : sel.related.has(id) ? "related" : "dimmed",
     };
   };
@@ -136,16 +153,35 @@ export function arrange(ix: Index, view: View): Scene {
     ...view.chips.map((id) => box(id, "ambient")),
     ...[...view.neighbors.keys()].map((id) => box(id, "neighbor")),
   ];
+  const bendsOf = (e: ViewEdge) => interior.bends.get(e.key)?.map((p) => ({ x: p.x + ox, y: p.y + oy })) ?? [];
+  const sides = new Map(
+    view.edges.map((e) => [
+      e.key,
+      interior.bends.has(e.key)
+        ? (["right", "left"] as [Dir, Dir])
+        : ports(e, rects.get(e.from)!, rects.get(e.to)!, view.neighbors),
+    ]),
+  );
+  const ends = spreadPorts(view.edges, sides, rects);
   const edges = view.edges.map((e) => {
-    const bends = interior.bends.get(e.key)?.map((p) => ({ x: p.x + ox, y: p.y + oy })) ?? [];
-    const edge = routeEdge(labels ? e : { ...e, labels: [] }, { rects, neighbors: view.neighbors, focus: view.focus, bends });
+    const lane = bendsOf(e);
+    const bends = lane.length ? lane : aroundBlockers(e, ends.get(e.key) as [Point, Point], rects, view);
+    // Edges between neighbors are context only and stay unlabeled.
+    const betweenNeighbors = view.neighbors.has(e.from) && view.neighbors.has(e.to);
+    const shown = labels && !betweenNeighbors ? e : { ...e, labels: [] };
+    const edge = routeEdge(shown, sides.get(e.key)!, ends.get(e.key) as [Point, Point], {
+      rects,
+      neighbors: view.neighbors,
+      focus: view.focus,
+      bends,
+    });
     edge.both = e.both;
     if (sel) edge.emphasis = sel.edges.has(e.key) ? "related" : "dimmed";
     return edge;
   });
   spreadLabels(edges);
 
-  return { boxes, edges, bounds: pad(union([...rects.values()]), MARGIN) };
+  return { focus: view.focus, boxes, edges, bounds: pad(union([...rects.values()]), MARGIN) };
 }
 
 interface RouteCtx {
@@ -156,12 +192,7 @@ interface RouteCtx {
   bends: Point[];
 }
 
-function routeEdge(e: ViewEdge, ctx: RouteCtx): SceneEdge {
-  const a = ctx.rects.get(e.from)!;
-  const b = ctx.rects.get(e.to)!;
-  const [pa, pb] = ctx.bends.length ? (["right", "left"] as const) : ports(e, a, b, ctx.neighbors);
-  const p0 = portPoint(a, pa);
-  const p1 = portPoint(b, pb);
+function routeEdge(e: ViewEdge, [pa, pb]: [Dir, Dir], [p0, p1]: [Point, Point], ctx: RouteCtx): SceneEdge {
   const label = labelText(e.labels);
 
   if (ctx.bends.length) {
@@ -176,8 +207,16 @@ function routeEdge(e: ViewEdge, ctx: RouteCtx): SceneEdge {
     return { key: e.key, d, label, labelAt, labelAnchor: "middle" };
   }
 
-  const k = Math.max(24, Math.hypot(p1.x - p0.x, p1.y - p0.y) / 2.5);
-  const curve: Bezier = [p0, step(p0, pa, k), step(p1, pb, k), p1];
+  // Straight unless a box is in the way. Straight edges are still cubic
+  // (control points on the line), so straight ↔ curved transitions morph.
+  const blocked = [...ctx.rects]
+    .filter(([id]) => id !== e.from && id !== e.to && id !== ctx.focus)
+    .some(([, r]) => segmentHitsRect(p0, p1, r));
+  // Bulge grows with length but stays capped, so long curves hug their row.
+  const k = Math.min(60, Math.max(24, Math.hypot(p1.x - p0.x, p1.y - p0.y) / 2.5));
+  const curve: Bezier = blocked
+    ? [p0, step(p0, pa, k), step(p1, pb, k), p1]
+    : [p0, lerp(p0, p1, 1 / 3), lerp(p0, p1, 2 / 3), p1];
   const [, c0, c1] = curve;
   return {
     key: e.key,
@@ -188,6 +227,36 @@ function routeEdge(e: ViewEdge, ctx: RouteCtx): SceneEdge {
 }
 
 type Bezier = [Point, Point, Point, Point];
+
+function lerp(a: Point, b: Point, t: number): Point {
+  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+}
+
+/** Whether the segment a→b passes within CLEARANCE of `r` (Liang–Barsky clip). */
+function segmentHitsRect(a: Point, b: Point, r: Rect): boolean {
+  const [x0, x1, y0, y1] = [r.x - CLEARANCE, r.x + r.w + CLEARANCE, r.y - CLEARANCE, r.y + r.h + CLEARANCE];
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  let t0 = 0;
+  let t1 = 1;
+  const clips: [number, number][] = [
+    [-dx, a.x - x0],
+    [dx, x1 - a.x],
+    [-dy, a.y - y0],
+    [dy, y1 - a.y],
+  ];
+  for (const [p, q] of clips) {
+    if (p === 0) {
+      if (q < 0) return false;
+      continue;
+    }
+    const t = q / p;
+    if (p < 0) t0 = Math.max(t0, t);
+    else t1 = Math.min(t1, t);
+    if (t0 > t1) return false;
+  }
+  return true;
+}
 
 function bezierAt([p0, c0, c1, p1]: Bezier, t: number): Point {
   const u = 1 - t;
@@ -201,7 +270,8 @@ function bezierAt([p0, c0, c1, p1]: Bezier, t: number): Point {
  */
 function placeLabel(e: ViewEdge, curve: Bezier, ctx: RouteCtx): Pick<SceneEdge, "labelAt" | "labelAnchor" | "labelSide"> {
   const dir = ctx.neighbors.get(e.from) ?? ctx.neighbors.get(e.to);
-  if (!dir || e.from === ctx.focus || e.to === ctx.focus) {
+  const betweenNeighbors = ctx.neighbors.has(e.from) && ctx.neighbors.has(e.to);
+  if (!dir || betweenNeighbors || e.from === ctx.focus || e.to === ctx.focus) {
     return { labelAt: bezierAt(curve, 0.5), labelAnchor: "middle" };
   }
   const frame = ctx.rects.get(ctx.focus)!;
@@ -242,47 +312,115 @@ function spreadLabels(edges: SceneEdge[]) {
 }
 
 /**
- * Places intervals in order along a line, each as near its target center as
- * possible without overlapping: overlapping runs merge into blocks centered on
- * their members' mean target. Returns start positions.
+ * How many steps each neighbor on one side sits from the frame along the flow
+ * between them. Upstream sides (left, up) count edges pointing toward the
+ * frame; downstream sides (right, down) count edges pointing away from it.
  */
-function pack(items: { center: number; size: number }[], gap: number): number[] {
-  interface Block {
-    first: number;
-    count: number;
-    start: number;
-    size: number;
-    /** Sum over members of (target start − offset within block). */
-    sum: number;
+function flowDepth(ids: string[], edges: ViewEdge[], dir: Dir): Map<string, number> {
+  const upstream = dir === "left" || dir === "up";
+  const nearer = new Map(ids.map((id) => [id, [] as string[]]));
+  for (const e of edges) {
+    if (!nearer.has(e.from) || !nearer.has(e.to)) continue;
+    const [far, near] = upstream ? [e.from, e.to] : [e.to, e.from];
+    nearer.get(far)!.push(near);
   }
-  const blocks: Block[] = [];
-  items.forEach((it, i) => {
-    let b: Block = { first: i, count: 1, start: it.center - it.size / 2, size: it.size, sum: it.center - it.size / 2 };
-    for (let prev = blocks.at(-1); prev && prev.start + prev.size + gap > b.start; prev = blocks.at(-1)) {
-      blocks.pop();
-      const shift = prev.size + gap;
-      const sum = prev.sum + b.sum - shift * b.count;
-      const count = prev.count + b.count;
-      b = { first: prev.first, count, start: sum / count, size: shift + b.size, sum };
-    }
-    blocks.push(b);
-  });
-  const starts: number[] = [];
-  for (const b of blocks) {
-    let at = b.start;
-    for (let i = b.first; i < b.first + b.count; i++) {
-      starts.push(at);
-      at += items[i]!.size + gap;
+  const depth = new Map<string, number>();
+  const visiting = new Set<string>();
+  const walk = (id: string): number => {
+    if (depth.has(id)) return depth.get(id)!;
+    if (visiting.has(id)) return 0;
+    visiting.add(id);
+    const d = Math.max(0, ...nearer.get(id)!.map((n) => walk(n) + 1));
+    visiting.delete(id);
+    depth.set(id, d);
+    return d;
+  };
+  ids.forEach(walk);
+  return depth;
+}
+
+/**
+ * Edge ends sharing one side of a box are spread PORT_GAP apart around the
+ * side's midpoint, ordered by where each edge's other end is so they don't cross.
+ */
+function spreadPorts(edges: ViewEdge[], sides: Map<string, [Dir, Dir]>, rects: Map<string, Rect>) {
+  const slots = new Map<string, { key: string; end: 0 | 1; order: number }[]>();
+  for (const e of edges) {
+    const [pa, pb] = sides.get(e.key)!;
+    const ends: [string, Dir, string, 0 | 1][] = [
+      [e.from, pa, e.to, 0],
+      [e.to, pb, e.from, 1],
+    ];
+    for (const [box, side, other, end] of ends) {
+      const c = center(rects.get(other)!);
+      const slot = `${box}:${side}`;
+      const list = slots.get(slot) ?? [];
+      list.push({ key: e.key, end, order: side === "left" || side === "right" ? c.y : c.x });
+      slots.set(slot, list);
     }
   }
-  return starts;
+  const out = new Map(edges.map((e) => [e.key, [] as Point[]]));
+  for (const [slot, list] of slots) {
+    const [box, side] = slot.split(":") as [string, Dir];
+    const r = rects.get(box)!;
+    const room = (side === "left" || side === "right" ? r.h : r.w) / 2 - 6;
+    list.sort((a, b) => a.order - b.order);
+    list.forEach((item, i) => {
+      const offset = Math.max(-room, Math.min(room, (i - (list.length - 1) / 2) * PORT_GAP));
+      const p = portPoint(r, side);
+      out.get(item.key)![item.end] = side === "left" || side === "right" ? { x: p.x, y: p.y + offset } : { x: p.x + offset, y: p.y };
+    });
+  }
+  // An end alone on its side lines up with its partner when the two sides face
+  // each other and the partner is within reach, so spreading the other end
+  // doesn't tilt a level edge.
+  for (const e of edges) {
+    const [pa, pb] = sides.get(e.key)!;
+    if (OPPOSITE[pa] !== pb) continue;
+    const pts = out.get(e.key)!;
+    const across = pa === "left" || pa === "right" ? "y" : "x";
+    ([[e.from, pa, 0], [e.to, pb, 1]] as const).forEach(([box, side, end]) => {
+      if (slots.get(`${box}:${side}`)!.length !== 1) return;
+      const r = rects.get(box)!;
+      const [lo, hi] = across === "y" ? [r.y + 6, r.y + r.h - 6] : [r.x + 6, r.x + r.w - 6];
+      const want = pts[1 - end]![across];
+      const shift = Math.abs(want - pts[end]![across]);
+      if (want >= lo && want <= hi && shift <= ALIGN_REACH) pts[end] = { ...pts[end]!, [across]: want };
+    });
+  }
+  return out;
+}
+
+/**
+ * An edge from a side neighbor whose straight path is blocked by boxes inside
+ * the frame passes just below (or above) each blocker, then arrives at its
+ * target's facing side like any other input running parallel to the flow.
+ */
+function aroundBlockers(e: ViewEdge, [p0, p1]: [Point, Point], rects: Map<string, Rect>, view: View): Point[] {
+  const side = view.neighbors.get(e.from) ?? view.neighbors.get(e.to);
+  if (!side || (side !== "left" && side !== "right")) return [];
+  if (view.neighbors.has(e.from) === view.neighbors.has(e.to)) return [];
+  const [outer, inner] = view.neighbors.has(e.from) ? [e.from, e.to] : [e.to, e.from];
+  if (inner === view.focus) return [];
+  const blockers = view.children
+    .filter((id) => id !== inner)
+    .map((id) => rects.get(id)!)
+    .filter((r) => segmentHitsRect(p0, p1, r));
+  if (!blockers.length) return [];
+  const below = center(rects.get(outer)!).y >= center(rects.get(inner)!).y;
+  const y = below
+    ? Math.max(...blockers.map((r) => r.y + r.h)) + LANE_OFFSET
+    : Math.min(...blockers.map((r) => r.y)) - LANE_OFFSET;
+  const pts = blockers.map((r) => ({ x: r.x + r.w / 2, y }));
+  return pts.sort((a, b) => (p0.x < p1.x ? a.x - b.x : b.x - a.x));
 }
 
 /** Which side of each endpoint the edge leaves from / arrives at. */
 function ports(e: ViewEdge, a: Rect, b: Rect, neighbors: Map<string, Dir>): [Dir, Dir] {
   const nf = neighbors.get(e.from);
-  if (nf) return [OPPOSITE[nf], nf];
   const nt = neighbors.get(e.to);
+  if (nf && nt) return b.y >= a.y + a.h ? ["down", "up"] : b.y + b.h <= a.y ? ["up", "down"] : b.x >= a.x ? ["right", "left"] : ["left", "right"];
+  if (nf) return [OPPOSITE[nf], nf];
   if (nt) return [nt, OPPOSITE[nt]];
   if (b.x >= a.x + a.w) return ["right", "left"];
   if (b.x + b.w <= a.x) return ["left", "right"];

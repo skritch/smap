@@ -64,7 +64,8 @@ function up() {
 const render = createRenderer(document.querySelector<SVGSVGElement>("#map")!, {
   click: (id) => (selectable(id) ? select(id === selected ? undefined : id) : go(id)),
   up,
-  background: () => select(undefined),
+  // Empty space clears a selection first; otherwise it zooms out, like clicking the frame.
+  background: () => (selected ? select(undefined) : up()),
 });
 
 function renderCrumbs(focus: string) {

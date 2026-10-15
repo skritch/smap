@@ -108,20 +108,33 @@ function computeInterior(ix: Index, id: string, labels: boolean): Interior {
     ),
   );
 
-  const cols = layers.map((l) => l.map((n) => ({ id: n, ...(isLane(n) ? { w: 0, h: LANE_H } : boxSize(ix, n)) })));
-  const colH = cols.map((col) => col.reduce((s, b) => s + b.h, 0) + ROW_GAP * (col.length - 1));
-  const h = Math.max(0, ...colH);
+  // Each box sits level with what feeds it, so chains run straight. Lanes
+  // carry almost no weight: they step aside rather than push boxes.
+  const preds = new Map(all.map((n) => [n, [] as string[]]));
+  for (const [a, b] of segments) preds.get(b)!.push(a);
+  const weight = (n: string) => (isLane(n) ? 1e-3 : 1);
+  const centerY = new Map<string, number>();
   const rects = new Map<string, Rect>();
   let x = 0;
-  cols.forEach((col, i) => {
+  layers.forEach((l, i) => {
+    const col = l.map((n) => ({ id: n, ...(isLane(n) ? { w: 0, h: LANE_H } : boxSize(ix, n)) }));
     const colW = Math.max(...col.map((b) => b.w));
-    let y = (h - colH[i]!) / 2;
-    for (const b of col) {
-      rects.set(b.id, { x: x + (colW - b.w) / 2, y, w: b.w, h: b.h });
-      y += b.h + ROW_GAP;
-    }
+    const items = col.map((b) => {
+      const ps = preds.get(b.id)!.filter((p) => centerY.has(p));
+      const w = ps.reduce((t, p) => t + weight(p), 0);
+      const center = ps.length ? ps.reduce((t, p) => t + weight(p) * centerY.get(p)!, 0) / w : 0;
+      return { center, size: b.h, weight: weight(b.id) };
+    });
+    const starts = pack(items, ROW_GAP).map(Math.round);
+    col.forEach((b, j) => {
+      rects.set(b.id, { x: x + (colW - b.w) / 2, y: starts[j]!, w: b.w, h: b.h });
+      centerY.set(b.id, starts[j]! + b.h / 2);
+    });
     x += colW + gaps[i]!;
   });
+  const top = Math.min(0, ...[...rects.values()].map((r) => r.y));
+  for (const r of rects.values()) r.y -= top;
+  const h = Math.max(0, ...[...rects.values()].map((r) => r.y + r.h));
 
   const bends = new Map<string, Point[]>();
   for (const [key, chain] of lanes) {
@@ -217,6 +230,46 @@ function orderLayers(nodes: string[], edges: [string, string][], layer: Map<stri
     }
   }
   return layers;
+}
+
+/**
+ * Places intervals in order along a line, each as near its target center as
+ * possible without overlapping. Overlapping runs merge into blocks placed at
+ * their members' weighted mean target. Returns start positions.
+ */
+export function pack(items: { center: number; size: number; weight?: number }[], gap: number): number[] {
+  interface Block {
+    first: number;
+    count: number;
+    start: number;
+    size: number;
+    weight: number;
+    /** Weighted sum over members of (target start − offset within block). */
+    sum: number;
+  }
+  const blocks: Block[] = [];
+  items.forEach((it, i) => {
+    const w = it.weight ?? 1;
+    const start = it.center - it.size / 2;
+    let b: Block = { first: i, count: 1, start, size: it.size, weight: w, sum: w * start };
+    for (let prev = blocks.at(-1); prev && prev.start + prev.size + gap > b.start; prev = blocks.at(-1)) {
+      blocks.pop();
+      const shift = prev.size + gap;
+      const sum = prev.sum + b.sum - shift * b.weight;
+      const weight = prev.weight + b.weight;
+      b = { first: prev.first, count: prev.count + b.count, start: sum / weight, size: shift + b.size, weight, sum };
+    }
+    blocks.push(b);
+  });
+  const starts: number[] = [];
+  for (const b of blocks) {
+    let at = b.start;
+    for (let i = b.first; i < b.first + b.count; i++) {
+      starts.push(at);
+      at += items[i]!.size + gap;
+    }
+  }
+  return starts;
 }
 
 const SIDE_VEC: Record<Side, [number, number]> = {

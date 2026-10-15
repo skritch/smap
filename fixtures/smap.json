@@ -1,0 +1,45 @@
+{
+  "root": "smap",
+  "boxes": {
+    "smap":    { "label": "smap", "summary": "Compiles a codebase into a zoomable map", "side": "in",
+                 "axes": "left → right = compile stages (source → IR → map → pixels), up = LLM, down = on-disk state",
+                 "sources": ["packages/"], "children": ["compile", "ir", "view"] },
+
+    "repo":    { "label": "Target repo",    "summary": "The codebase being mapped", "side": "left",  "sources": [], "children": [] },
+    "user":    { "label": "Browser / VS Code", "summary": "Where the map is viewed and navigated", "side": "right", "sources": [], "children": [] },
+    "claude":  { "label": "Claude API",     "summary": "Structured calls and agent harness", "side": "up",    "sources": [], "children": [] },
+    "codemap": { "label": ".codemap/",      "summary": "Persisted map IR and pass caches", "side": "down",  "sources": [], "children": [] },
+
+    "compile": { "label": "Compile", "summary": "Source tree to map IR", "side": "in", "sources": ["packages/compile/"],
+                 "children": ["ingest", "digest", "skeleton", "refine"] },
+    "ir":      { "label": "Map IR",  "summary": "Shared types and validation", "side": "in", "sources": ["packages/ir/"], "children": [] },
+    "view":    { "label": "Render",  "summary": "Map IR to an interactive picture", "side": "in", "sources": ["packages/render/"],
+                 "children": ["derive", "layout", "draw"] },
+
+    "ingest":   { "label": "Ingest",        "summary": "Files, hashes, regex symbols, string index", "side": "in", "sources": ["packages/compile/src/ingest/"],   "children": [] },
+    "digest":   { "label": "File digests",  "summary": "Small-model summary per file", "side": "in", "sources": ["packages/compile/src/digest/"],   "children": [] },
+    "skeleton": { "label": "Skeleton pass", "summary": "Top-level boxes, sides, edges", "side": "in", "sources": ["packages/compile/src/skeleton/"], "children": [] },
+    "refine":   { "label": "Refine pass",   "summary": "Lazily expands one box", "side": "in", "sources": ["packages/compile/src/refine/"],   "children": [] },
+
+    "derive":   { "label": "View derivation", "summary": "Focus + context, detail budget", "side": "in", "sources": ["packages/render/src/view/"],   "children": [] },
+    "layout":   { "label": "Layout",          "summary": "Deterministic positions, pinned", "side": "in", "sources": ["packages/render/src/layout/"], "children": [] },
+    "draw":     { "label": "Draw",            "summary": "Keyed D3 joins and transitions", "side": "in", "sources": ["packages/render/src/main.ts"], "children": [] }
+  },
+  "edges": [
+    { "id": "s1",  "from": "repo",     "to": "ingest",   "label": "source tree" },
+    { "id": "s2",  "from": "ingest",   "to": "digest",   "label": "FileRecord[]" },
+    { "id": "s3",  "from": "digest",   "to": "skeleton", "label": "FileDigest[]" },
+    { "id": "s4",  "from": "skeleton", "to": "refine",   "label": "MapDoc" },
+    { "id": "s5",  "from": "refine",   "to": "codemap",  "label": "MapDoc" },
+    { "id": "s6",  "from": "codemap",  "to": "derive",   "label": "MapDoc" },
+    { "id": "s7",  "from": "derive",   "to": "layout",   "label": "View" },
+    { "id": "s8",  "from": "layout",   "to": "draw",     "label": "Positioned" },
+    { "id": "s9",  "from": "draw",     "to": "user",     "label": "SVG" },
+    { "id": "s10", "from": "user",     "to": "derive",   "label": "focus change" },
+    { "id": "s11", "from": "digest",   "to": "claude" },
+    { "id": "s12", "from": "skeleton", "to": "claude" },
+    { "id": "s13", "from": "refine",   "to": "claude" },
+    { "id": "s14", "from": "compile",  "to": "ir" },
+    { "id": "s15", "from": "view",     "to": "ir" }
+  ]
+}

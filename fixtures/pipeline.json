@@ -2,14 +2,14 @@
   "startFocus": "pipeline",
   "boxes": {
     "pipeline":  { "label": "Churn pipeline", "summary": "Nightly batch DAG from raw events to churn scores", "side": "in",
-                   "axes": "left → right = dataflow, up = alerting, down = config and ad-hoc reads",
-                   "sources": ["pipeline/"], "children": ["ingest", "clean", "transform", "model", "publish"] },
+                   "axes": "left → right = dataflow, up = alerting, down = ad-hoc reads",
+                   "sources": ["pipeline/"], "children": ["ingest", "clean", "transform", "model", "publish", "config"] },
 
-    "s3_raw":    { "label": "S3 raw events",   "summary": "Clickstream dumps, one prefix per day", "side": "left",  "sources": [], "children": [] },
-    "orders_db": { "label": "Orders DB",       "summary": "Read replica of the production Postgres", "side": "left",  "sources": [], "children": [] },
-    "warehouse": { "label": "Warehouse",       "summary": "Snowflake schema the dashboards read from", "side": "right", "sources": [], "children": [] },
-    "alerts":    { "label": "Slack alerts",    "summary": "Row-count and freshness checks post here", "side": "up",    "sources": ["pipeline/alerts.py"], "children": [] },
-    "config":    { "label": "Config",          "summary": "Dates, paths, model params", "side": "down",  "sources": ["config/pipeline.yaml", "pipeline/settings.py"], "children": [] },
+    "s3_raw":    { "label": "S3 raw events", "external": true,   "summary": "Clickstream dumps, one prefix per day", "side": "left",  "sources": [], "children": [] },
+    "orders_db": { "label": "Orders DB", "external": true,       "summary": "Read replica of the production Postgres", "side": "left",  "sources": [], "children": [] },
+    "warehouse": { "label": "Warehouse", "external": true,       "summary": "Snowflake schema the dashboards read from", "side": "right", "sources": [], "children": [] },
+    "alerts":    { "label": "Slack alerts", "external": true, "ambient": true,    "summary": "Row-count and freshness checks post here", "side": "up",    "sources": ["pipeline/alerts.py"], "children": [] },
+    "config":    { "label": "Config", "ambient": true, "summary": "Dates, paths, model params", "side": "in",  "sources": ["config/pipeline.yaml", "pipeline/settings.py"], "children": [] },
     "analysis":  { "label": "Analysis notebooks", "summary": "Ad-hoc exploration of intermediate tables", "side": "down",
                    "sources": ["notebooks/"], "children": ["nb_sessions", "nb_model"] },
 
@@ -56,7 +56,14 @@
     { "id": "p15", "from": "join_sessions",  "to": "nb_sessions",    "label": "sessions.parquet" },
     { "id": "p16", "from": "train_churn",    "to": "nb_model",       "label": "model.pkl" },
     { "id": "p17", "from": "build_features", "to": "nb_model",       "label": "features.parquet" },
-    { "id": "p18", "from": "config",         "to": "pipeline" },
-    { "id": "p19", "from": "pipeline",       "to": "alerts",         "label": "check failures" }
+    { "id": "p18", "from": "config",         "to": "fetch_events" },
+    { "id": "p19", "from": "config",         "to": "fetch_orders" },
+    { "id": "p20", "from": "config",         "to": "train_churn" },
+    { "id": "p21", "from": "config",         "to": "export_scores" },
+    { "id": "p22", "from": "fetch_events",   "to": "alerts" },
+    { "id": "p23", "from": "clean_events",   "to": "alerts" },
+    { "id": "p24", "from": "dedupe_orders",  "to": "alerts" },
+    { "id": "p25", "from": "score_users",    "to": "alerts" },
+    { "id": "p26", "from": "export_scores",  "to": "alerts" }
   ]
 }

@@ -31,9 +31,24 @@ d3.select<HTMLSelectElement, unknown>("#fixture")
   .text((n) => n);
 
 // The focus lives in the URL hash, so reload and browser back/forward work.
+// External and ambient boxes are selected rather than focused.
+let selected: string | undefined;
+
 function readState(): ViewState {
   const id = decodeURIComponent(location.hash.slice(1));
-  return { focus: Object.hasOwn(doc.boxes, id) ? id : doc.startFocus };
+  const focusable = Object.hasOwn(doc.boxes, id) && !selectable(id);
+  return { focus: focusable ? id : doc.startFocus, selected };
+}
+
+function selectable(id: string): boolean {
+  const box = doc.boxes[id];
+  return !!(box?.external || box?.ambient);
+}
+
+function select(id: string | undefined) {
+  if (id === selected) return;
+  selected = id;
+  update();
 }
 
 function go(id: string) {
@@ -46,7 +61,11 @@ function up() {
   if (target) go(target);
 }
 
-const render = createRenderer(document.querySelector<SVGSVGElement>("#map")!, { focus: go, up });
+const render = createRenderer(document.querySelector<SVGSVGElement>("#map")!, {
+  click: (id) => (selectable(id) ? select(id === selected ? undefined : id) : go(id)),
+  up,
+  background: () => select(undefined),
+});
 
 function renderCrumbs(focus: string) {
   const trail = ix.parent.has(focus) || focus === doc.startFocus
@@ -67,8 +86,12 @@ function update() {
   renderCrumbs(state.focus);
 }
 
-window.addEventListener("hashchange", update);
+window.addEventListener("hashchange", () => {
+  selected = undefined;
+  update();
+});
 window.addEventListener("keydown", (ev) => {
-  if (ev.key === "Escape" || ev.key === "Backspace") up();
+  if (ev.key === "Escape" && selected) select(undefined);
+  else if (ev.key === "Escape" || ev.key === "Backspace") up();
 });
 update();

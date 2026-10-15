@@ -67,7 +67,7 @@ The map is a map. Things stay where they are across zooms, regenerations and edi
 
 ### 1.9 Interaction
 
-- Click a node → go to the code.
+- Click a box → zoom into it; click an external box → highlight what connects to it. Getting to the code is a separate action.
 - Rearrange with natural-language input ("this section is too granular", "group these differently").
 - Alternate views and dimensions on request (e.g. the tests layer).
 - **Targets:** browser first (prototype), then a VS Code plugin as an alternative to the textual view.
@@ -94,7 +94,7 @@ The LLM only touches the compile passes. Everything else is deterministic.
 
 ### 2.1 Map data structure
 
-The v1 IR is deliberately stupid: nodes, edges, directions.
+The v1 IR is deliberately stupid: nodes, edges, directions. It's called a `MapDoc` and lives in `packages/ir`. It is the contract between compile and render: the compile passes write it, and the renderer only reads it.
 
 **Box (node)**
 
@@ -102,6 +102,8 @@ The v1 IR is deliberately stupid: nodes, edges, directions.
 |------------|---------------------------------------------------------------------------------------|
 | `id`       | stable across regeneration and edits                                                  |
 | `label`    | short name                                                                            |
+| `external` | optional; outside the codebase (DB, third-party API, HTTP server). Never has children |
+| `ambient`  | optional; touches many things (config, alerting, logging). Edges kept, drawing summarized |
 | `summary`  | one line                                                                              |
 | `side`     | `in \| left \| right \| up \| down`, placement relative to parent                     |
 | `axes`     | optional sentence describing what this box's interior directions mean                 |
@@ -117,18 +119,22 @@ The v1 IR is deliberately stupid: nodes, edges, directions.
 | `to`    | box id                        |
 | `label` | optional (e.g. type flowing)  |
 
-Example fixture:
+Edges may connect boxes at any depth; the renderer lifts them to whatever is visible. Keep edges light: a label at most, not a full description of what flows.
+
+The document also names a `startFocus`: the box the view opens on. Boxes with no parent are neighbors of that box.
+
+Example fixture (`fixtures/app.json`; there are also `pipeline.json` and `smap.json`):
 
 ```json
 {
-  "root": "app",
+  "startFocus": "app",
   "boxes": {
     "app":      { "label": "App", "summary": "Order service", "side": "in",
                   "axes": "left = user, right = backend services, down = persistence",
                   "sources": ["src/"], "children": ["routes", "logic", "config"] },
-    "server":   { "label": "HTTP server", "side": "left",  "sources": ["src/main.py"], "children": [] },
-    "db":       { "label": "Postgres",    "side": "down",  "sources": ["src/db.py"],   "children": [] },
-    "payments": { "label": "Payments API","side": "right", "sources": ["src/clients/pay.py"], "children": [] },
+    "server":   { "label": "HTTP server", "external": true, "side": "left",  "sources": ["src/main.py"], "children": [] },
+    "db":       { "label": "Postgres", "external": true,    "side": "down",  "sources": ["src/db.py"],   "children": [] },
+    "payments": { "label": "Payments API", "external": true,"side": "right", "sources": ["src/clients/pay.py"], "children": [] },
     "routes":   { "label": "Routing",     "side": "in",    "sources": ["src/routes/"], "children": [] },
     "logic":    { "label": "Business logic","side": "in",  "sources": ["src/orders.py"], "children": [] },
     "config":   { "label": "Config",      "side": "in",    "sources": ["src/config.py"], "children": [] }
@@ -142,22 +148,37 @@ Example fixture:
 }
 ```
 
+The HTTP server counts as external in the runtime view: once the app exists, the server is a dumb layer in front of it. In a lifecycle view (§1.5), the server is constructed at startup and calls the app.
+
 Open questions:
-- How are external neighbors (server, DB, payments) parented? As siblings of `app` under an implicit root, or as children with an outward `side`?
+- Grouping similar neighbors (several alerting sinks → one "Alerting" box) probably means letting external boxes have children.
 - Exact ID scheme.
 - On-disk location and format (e.g. a `.codemap/` directory).
 
 ### 2.2 Rendering
 
-- Browser first. Must also work later inside a VS Code webview.
-- **Focus model:** render the focused box's interior plus its context. Neighbors outside the focus are projected onto the frame's sides as stubs or ports, according to `side`.
-- **Detail budget:** decided by the renderer, not the LLM. Show what fits; collapse the rest ("+N more").
-- **Transitions:** keyed by stable IDs, D3-style enter/update/exit, so zooming and edits animate rather than redraw.
-- **Layout:** deterministic given the IR. Pin positions once placed. A constraint-capable layered layout engine (ELK is a candidate) running off the main thread.
+- Browser first. Must also work later inside a VS Code webview. SVG + D3, built with Vite (`packages/render`).
+- Pipeline: `MapDoc` + view state (current focus, selection) → visible set → layout → keyed D3 joins.
+- **Focus model:** the focused box is drawn as a frame with its children inside. Context is siblings of the focus and of its ancestors, shown only if an edge connects them to the frame (top-level neighbors always show). Each one sits on the side it occupied one level up, so zooming into Routing puts Business logic to its right.
+- **Edges:** lifted to the nearest visible box and merged. Opposite pairs become one double-ended arrow.
+- **Ambient boxes:** the compiler decides what is ambient (a judgment about meaning). The renderer decides how to summarize it (a drawing decision), and the map keeps the real edges either way.
+  - Inside the frame, ambient boxes are chips in the header, with no drawn edges. Zooming into a child drops the chip: you are inside its scope, so it is not context.
+  - Outside the frame, all their edges collapse into one edge to the frame.
+  - Selecting one reveals its real connections.
+  - Config is ambient inside the app: it is injected and becomes ambient state. The startup flow, where config instantiates the app, belongs to a separate lifecycle view.
+- **External and ambient boxes** are selected, not zoomed: clicking one highlights the visible boxes that connect to it and dims the rest. The layout doesn't move. Finding the exact file is done by zooming in. Later, selecting might rearrange the interior to bring the connected subcomponents forward.
+- **Detail budget:** decided by the renderer, not the LLM. Aim for roughly 5–8 things per view. Today: edge labels drop out when a view has more than 8 edges. Later: collapse the rest into groups the renderer makes. Only those groups show a count ("+N"). A box with children is an abstraction, and its contents are not counted or hinted at.
+- **Transitions:** keyed by stable IDs, D3-style enter/update/exit, so zooming and edits animate rather than redraw. Focus changes are discrete steps with animated transitions.
+- **Layout:** our own simple layered layout, deterministic given the IR.
+  - Children are placed left → right by dataflow and reordered to reduce crossings.
+  - Edges that skip a column get their own lane.
+  - Each box's interior depends only on its own subtree, so positions stay stable across focus changes without pinning.
+  - Neighbors line up with the boxes they connect to, so their edges run straight where possible.
+  - ELK remains an option if this outgrows itself.
 
 Open questions:
-- Renderer technology (SVG / Canvas / WebGL). Node counts per view are small by design.
-- Camera model: true continuous zoom vs. discrete focus changes with animated transitions.
+- Whether internal boxes should also select on click, with zoom as a separate action.
+- Continuous zoom/pan as well as discrete focus steps.
 
 ### 2.3 Source ingest
 
@@ -200,7 +221,7 @@ Open questions:
 
 ### 2.6 LLM connections / harness
 
-- The orchestrator is our own code. Tentatively TypeScript, to share code with the browser and VS Code targets.
+- The orchestrator is our own code, in TypeScript, to share code with the browser and VS Code targets. The repo is npm workspaces: `packages/ir` (shared types), `packages/render`, and later `packages/compile` and `packages/vscode`.
 - Structured calls go through the API directly, with JSON-schema outputs.
 - Exploratory steps that need to read or grep around (e.g. "where is the app constructed?") use an existing agent harness, such as the Claude Agent SDK.
 - **Caching:**
@@ -227,13 +248,15 @@ Open questions:
 
 ## 3. Milestones
 
-**M0: Dummy map.**
+**M0: Dummy map.** *(done)*
 Render a hand-written fixture JSON (§2.1) in the browser: boxes, edges, sides. Click a box to make it the focus; go back up.
 
-**M1: Navigation feel.**
-- Focus + context: neighbors projected to frame sides.
-- Stable-ID-keyed animated transitions.
-- Pinned layout.
+**M1: Navigation feel.** *(in progress)*
+- Focus + context: neighbors projected to frame sides. *(done)*
+- Stable-ID-keyed animated transitions. *(done)*
+- Stable layout. *(done, by construction)*
+- Selecting external boxes. *(done)*
+- Visual styling pass.
 - Click → open file (e.g. a `vscode://file/...` link).
 
 Iterate on the fixture until navigating it *feels* right.

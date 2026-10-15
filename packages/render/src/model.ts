@@ -17,6 +17,10 @@ export function indexDoc(doc: MapDoc): Index {
   return { doc, parent, topLevel };
 }
 
+export function isAmbient(ix: Index, id: string): boolean {
+  return ix.doc.boxes[id]?.ambient ?? false;
+}
+
 export function childrenOf(ix: Index, id: string): string[] {
   return ix.doc.boxes[id]?.children ?? [];
 }

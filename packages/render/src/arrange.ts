@@ -1,8 +1,8 @@
 import { boxSize, labelText, layoutInterior, textWidth, type Dir, type Point, type Rect } from "./geometry";
-import { childrenOf, type Index } from "./model";
+import type { Index } from "./model";
 import type { View, ViewEdge } from "./view";
 
-export type Role = "frame" | "child" | "neighbor";
+export type Role = "frame" | "child" | "neighbor" | "ambient";
 
 export interface SceneBox {
   id: string;
@@ -10,7 +10,8 @@ export interface SceneBox {
   rect: Rect;
   label: string;
   axes?: string;
-  childCount: number;
+  external: boolean;
+  emphasis?: "selected" | "related" | "dimmed";
 }
 
 export interface SceneEdge {
@@ -21,6 +22,8 @@ export interface SceneEdge {
   labelAnchor: "start" | "middle" | "end";
   /** Frame side the label sits outside of, for edges to neighbors. */
   labelSide?: Dir;
+  emphasis?: "related" | "dimmed";
+  both?: boolean;
 }
 
 /** Everything positioned, in frame coordinates (frame top-left at 0,0). */
@@ -34,7 +37,11 @@ const PAD = 28;
 const TITLE_H = 36;
 const AXES_H = 16;
 const MIN_FRAME = { w: 280, h: 160 };
-const NEIGHBOR_GAP = 96;
+const CHIP_H = 22;
+const CHIP_GAP = 8;
+const NEIGHBOR_GAP = 56;
+/** Views with more edges than this drop edge labels to stay readable. */
+const LABEL_BUDGET = 8;
 const LABEL_OFFSET = 8;
 const LABEL_LINE = 14;
 const STACK_GAP = 20;
@@ -43,16 +50,31 @@ const DIRS: Dir[] = ["left", "right", "up", "down"];
 const OPPOSITE: Record<Dir, Dir> = { left: "right", right: "left", up: "down", down: "up" };
 
 export function arrange(ix: Index, view: View): Scene {
-  const interior = layoutInterior(ix, view.focus);
+  const labels = view.edges.length <= LABEL_BUDGET;
+  const interior = layoutInterior(ix, view.focus, labels);
   const axes = ix.doc.boxes[view.focus]?.axes;
   const header = TITLE_H + (axes ? AXES_H : 0);
-  const fw = Math.max(MIN_FRAME.w, interior.w + 2 * PAD, textWidth(axes ?? "") + 2 * PAD);
+  // Ambient chips line the right of the header, beside the title.
+  const chipW = view.chips.map((id) => textWidth(ix.doc.boxes[id]?.label ?? id, 12) + 24);
+  const chipsW = chipW.reduce((t, w) => t + w + CHIP_GAP, 0);
+  const titleW = textWidth(ix.doc.boxes[view.focus]?.label ?? view.focus, 14);
+  const fw = Math.max(
+    MIN_FRAME.w,
+    interior.w + 2 * PAD,
+    textWidth(axes ?? "") + 2 * PAD,
+    titleW + chipsW + 2 * PAD + 24,
+  );
   const fh = Math.max(MIN_FRAME.h, interior.h + 2 * PAD + header);
   const ox = (fw - interior.w) / 2;
   const oy = header + (fh - header - interior.h) / 2;
 
   const rects = new Map<string, Rect>([[view.focus, { x: 0, y: 0, w: fw, h: fh }]]);
   for (const [id, r] of interior.rects) rects.set(id, { ...r, x: r.x + ox, y: r.y + oy });
+  let chipX = fw - 12 - chipsW + CHIP_GAP;
+  view.chips.forEach((id, i) => {
+    rects.set(id, { x: chipX, y: 11, w: chipW[i]!, h: CHIP_H });
+    chipX += chipW[i]! + CHIP_GAP;
+  });
 
   // One stack of neighbors per side, ordered by where their edges land inside.
   for (const dir of DIRS) {
@@ -60,7 +82,7 @@ export function arrange(ix: Index, view: View): Scene {
     const ids = [...view.neighbors].filter(([, d]) => d === dir).map(([id]) => id);
     if (!ids.length) continue;
     // Side gaps leave room for the edge labels that sit just outside the frame.
-    const gap = !vertical
+    const gap = !vertical || !labels
       ? NEIGHBOR_GAP
       : Math.max(
           NEIGHBOR_GAP,
@@ -95,6 +117,7 @@ export function arrange(ix: Index, view: View): Scene {
     });
   }
 
+  const sel = view.selection;
   const box = (id: string, role: Role): SceneBox => {
     const b = ix.doc.boxes[id];
     return {
@@ -103,19 +126,22 @@ export function arrange(ix: Index, view: View): Scene {
       rect: rects.get(id)!,
       label: b?.label ?? id,
       axes: b?.axes,
-      childCount: childrenOf(ix, id).length,
+      external: b?.external ?? false,
+      emphasis: !sel || role === "frame" ? undefined : id === sel.id ? "selected" : sel.related.has(id) ? "related" : "dimmed",
     };
   };
   const boxes = [
     box(view.focus, "frame"),
     ...view.children.map((id) => box(id, "child")),
+    ...view.chips.map((id) => box(id, "ambient")),
     ...[...view.neighbors.keys()].map((id) => box(id, "neighbor")),
   ];
-  const keys = new Set(view.edges.map((e) => e.key));
   const edges = view.edges.map((e) => {
     const bends = interior.bends.get(e.key)?.map((p) => ({ x: p.x + ox, y: p.y + oy })) ?? [];
-    const paired = keys.has(`${e.to}->${e.from}`);
-    return routeEdge(e, { rects, neighbors: view.neighbors, focus: view.focus, bends, paired });
+    const edge = routeEdge(labels ? e : { ...e, labels: [] }, { rects, neighbors: view.neighbors, focus: view.focus, bends });
+    edge.both = e.both;
+    if (sel) edge.emphasis = sel.edges.has(e.key) ? "related" : "dimmed";
+    return edge;
   });
   spreadLabels(edges);
 
@@ -128,22 +154,14 @@ interface RouteCtx {
   focus: string;
   /** Lane waypoints for edges that skip layers. */
   bends: Point[];
-  /** An edge runs the opposite way between the same boxes. */
-  paired: boolean;
 }
 
 function routeEdge(e: ViewEdge, ctx: RouteCtx): SceneEdge {
   const a = ctx.rects.get(e.from)!;
   const b = ctx.rects.get(e.to)!;
   const [pa, pb] = ctx.bends.length ? (["right", "left"] as const) : ports(e, a, b, ctx.neighbors);
-  let p0 = portPoint(a, pa);
-  let p1 = portPoint(b, pb);
-  if (ctx.paired) {
-    // Keep a pair of opposite edges apart, as parallel lines.
-    const by = e.from < e.to ? 6 : -6;
-    p0 = nudge(p0, pa, by);
-    p1 = nudge(p1, pb, by);
-  }
+  const p0 = portPoint(a, pa);
+  const p1 = portPoint(b, pb);
   const label = labelText(e.labels);
 
   if (ctx.bends.length) {
@@ -258,10 +276,6 @@ function pack(items: { center: number; size: number }[], gap: number): number[] 
     }
   }
   return starts;
-}
-
-function nudge(p: Point, d: Dir, by: number): Point {
-  return d === "left" || d === "right" ? { x: p.x, y: p.y + by } : { x: p.x + by, y: p.y };
 }
 
 /** Which side of each endpoint the edge leaves from / arrives at. */

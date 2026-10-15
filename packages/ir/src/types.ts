@@ -4,6 +4,13 @@ export type Side = "in" | "left" | "right" | "up" | "down";
 
 export interface Box {
   label: string;
+  /** Outside the codebase (a database, an API, the user). Never has children. */
+  external?: boolean;
+  /**
+   * Touches many things (config, alerting, logging). Its edges stay in the map
+   * but the renderer summarizes them instead of drawing each one.
+   */
+  ambient?: boolean;
   summary?: string;
   side: Side;
   /** What this box's interior directions mean. */

@@ -4,17 +4,19 @@
     "app":      { "label": "App", "summary": "Order service", "side": "in",
                   "axes": "left = user, right = backend services, down = persistence",
                   "sources": ["src/"], "children": ["routes", "logic", "config"] },
-    "server":   { "label": "HTTP server", "side": "left",  "sources": ["src/main.py"], "children": [] },
-    "db":       { "label": "Postgres",    "side": "down",  "sources": ["src/db.py"],   "children": [] },
-    "payments": { "label": "Payments API","side": "right", "sources": ["src/clients/pay.py"], "children": [] },
+    "server":   { "label": "HTTP server", "external": true, "side": "left",  "sources": ["src/main.py"], "children": [] },
+    "db":       { "label": "Postgres", "external": true,    "side": "down",  "sources": ["src/db.py"],   "children": [] },
+    "payments": { "label": "Payments API", "external": true,"side": "right", "sources": ["src/clients/pay.py"], "children": [] },
     "routes":   { "label": "Routing",     "side": "in",    "sources": ["src/routes/"], "children": [] },
     "logic":    { "label": "Business logic","side": "in",  "sources": ["src/orders.py"], "children": [] },
-    "config":   { "label": "Config",      "side": "in",    "sources": ["src/config.py"], "children": [] }
+    "config":   { "label": "Config", "ambient": true, "side": "in",    "sources": ["src/config.py"], "children": [] }
   },
   "edges": [
     { "id": "e1", "from": "server", "to": "routes" },
     { "id": "e2", "from": "routes", "to": "logic", "label": "OrderRequest" },
     { "id": "e3", "from": "logic",  "to": "db" },
-    { "id": "e4", "from": "logic",  "to": "payments" }
+    { "id": "e4", "from": "logic",  "to": "payments" },
+    { "id": "e5", "from": "config", "to": "routes" },
+    { "id": "e6", "from": "config", "to": "logic" }
   ]
 }

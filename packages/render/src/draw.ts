@@ -5,8 +5,12 @@ import type { Rect } from "./geometry";
 const DURATION = 500;
 
 export interface Handlers {
-  focus(id: string): void;
+  /** A non-frame box was clicked. */
+  click(id: string): void;
+  /** The frame was clicked. */
   up(): void;
+  /** Empty space was clicked. */
+  background(): void;
 }
 
 /**
@@ -14,7 +18,7 @@ export interface Handlers {
  * role (child → frame) moves between layers but starts from its old rect.
  */
 export function createRenderer(svgEl: SVGSVGElement, on: Handlers): (scene: Scene) => void {
-  const svg = d3.select(svgEl);
+  const svg = d3.select(svgEl).on("click", () => on.background());
   svg
     .append("defs")
     .append("marker")
@@ -31,7 +35,7 @@ export function createRenderer(svgEl: SVGSVGElement, on: Handlers): (scene: Scen
   const edgeLayer = svg.append("g").attr("class", "edges");
   const nodeLayer = svg.append("g").attr("class", "nodes");
   const labelLayer = svg.append("g").attr("class", "edge-labels");
-  let prev = new Map<string, Rect>();
+  let prev = new Map<string, SceneBox>();
   let first = true;
 
   return (scene) => {
@@ -48,18 +52,28 @@ export function createRenderer(svgEl: SVGSVGElement, on: Handlers): (scene: Scen
           (enter) => {
             const g = enter
               .append("g")
-              .attr("transform", (d) => translate(prev.get(d.id) ?? d.rect))
+              .attr("transform", (d) => translate((prev.get(d.id) ?? d).rect))
               .style("opacity", (d) => (prev.has(d.id) ? 1 : 0))
               .on("click", (ev: MouseEvent, d) => {
                 ev.stopPropagation();
                 if (d.role === "frame") on.up();
-                else on.focus(d.id);
+                else on.click(d.id);
               });
             g.append("rect")
-              .attr("width", (d) => (prev.get(d.id) ?? d.rect).w)
-              .attr("height", (d) => (prev.get(d.id) ?? d.rect).h);
-            g.append("text").attr("class", "label");
-            g.append("text").attr("class", "meta");
+              .attr("width", (d) => (prev.get(d.id) ?? d).rect.w)
+              .attr("height", (d) => (prev.get(d.id) ?? d).rect.h);
+            // A box that changed layer starts its label where it was last drawn.
+            g.append("text")
+              .attr("class", "label")
+              .attr("text-anchor", "middle")
+              .text((d) => d.label)
+              .attr("x", function (d) {
+                return labelPos(prev.get(d.id) ?? d, this).x;
+              })
+              .attr("y", function (d) {
+                return labelPos(prev.get(d.id) ?? d, this).y;
+              });
+            g.append("text").attr("class", "axes");
             return g;
           },
           (update) => update,
@@ -73,9 +87,12 @@ export function createRenderer(svgEl: SVGSVGElement, on: Handlers): (scene: Scen
               .remove();
           },
         )
-        .attr("class", (d) => `box ${d.role}`);
+        .attr("class", (d) => ["box", d.role, d.external && "external", d.emphasis].filter(Boolean).join(" "));
 
-      merged.transition(t).attr("transform", (d) => translate(d.rect)).style("opacity", 1);
+      merged
+        .transition(t)
+        .attr("transform", (d) => translate(d.rect))
+        .style("opacity", (d) => opacity(d.emphasis));
       merged
         .select("rect")
         .transition(t)
@@ -84,17 +101,18 @@ export function createRenderer(svgEl: SVGSVGElement, on: Handlers): (scene: Scen
       merged
         .select<SVGTextElement>("text.label")
         .text((d) => d.label)
-        .attr("text-anchor", (d) => (d.role === "frame" ? "start" : "middle"))
         .transition(t)
-        .attr("x", (d) => (d.role === "frame" ? 14 : d.rect.w / 2))
-        .attr("y", (d) => (d.role === "frame" ? 22 : d.rect.h / 2));
+        .attr("x", function (d) {
+          return labelPos(d, this).x;
+        })
+        .attr("y", function (d) {
+          return labelPos(d, this).y;
+        });
       merged
-        .select<SVGTextElement>("text.meta")
-        .text((d) => (d.role === "frame" ? (d.axes ?? "") : d.childCount ? `▸ ${d.childCount}` : ""))
-        .attr("text-anchor", (d) => (d.role === "frame" ? "start" : "end"))
-        .transition(t)
-        .attr("x", (d) => (d.role === "frame" ? 14 : d.rect.w - 8))
-        .attr("y", (d) => (d.role === "frame" ? 40 : 13));
+        .select<SVGTextElement>("text.axes")
+        .text((d) => (d.role === "frame" ? (d.axes ?? "") : ""))
+        .attr("x", 14)
+        .attr("y", 40);
     };
     joinBoxes(frameLayer, scene.boxes.filter((b) => b.role === "frame"));
     joinBoxes(nodeLayer, scene.boxes.filter((b) => b.role !== "frame"));
@@ -112,9 +130,11 @@ export function createRenderer(svgEl: SVGSVGElement, on: Handlers): (scene: Scen
         (update) => update,
         (exit) => exit.transition(t).style("opacity", 0).remove(),
       )
+      .classed("related", (d) => d.emphasis === "related")
+      .attr("marker-start", (d) => (d.both ? "url(#arrow)" : null))
       .transition(t)
       .attr("d", (d) => d.d)
-      .style("opacity", 1);
+      .style("opacity", (d) => opacity(d.emphasis));
 
     labelLayer
       .selectAll<SVGTextElement, SceneEdge>("text")
@@ -137,11 +157,24 @@ export function createRenderer(svgEl: SVGSVGElement, on: Handlers): (scene: Scen
       .transition(t)
       .attr("x", (d) => d.labelAt.x)
       .attr("y", (d) => d.labelAt.y)
-      .style("opacity", 1);
+      .style("opacity", (d) => opacity(d.emphasis));
 
-    prev = new Map(scene.boxes.map((b) => [b.id, b.rect]));
+    prev = new Map(scene.boxes.map((b) => [b.id, b]));
     first = false;
   };
+}
+
+/**
+ * Labels stay centered (text-anchor middle) in every role, so moving between
+ * roles is a plain position tween. The frame title sits at the top left.
+ */
+function labelPos(b: SceneBox, el: SVGTextElement): { x: number; y: number } {
+  if (b.role === "frame") return { x: 14 + el.getComputedTextLength() / 2, y: 22 };
+  return { x: b.rect.w / 2, y: b.rect.h / 2 };
+}
+
+function opacity(emphasis: string | undefined): number {
+  return emphasis === "dimmed" ? 0.25 : 1;
 }
 
 function translate(r: Rect): string {

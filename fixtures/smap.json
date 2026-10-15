@@ -5,10 +5,10 @@
                  "axes": "left → right = compile stages (source → IR → map → pixels), up = LLM, down = on-disk state",
                  "sources": ["packages/"], "children": ["compile", "ir", "view"] },
 
-    "repo":    { "label": "Target repo",    "summary": "The codebase being mapped", "side": "left",  "sources": [], "children": [] },
-    "user":    { "label": "Browser / VS Code", "summary": "Where the map is viewed and navigated", "side": "right", "sources": [], "children": [] },
-    "claude":  { "label": "Claude API",     "summary": "Structured calls and agent harness", "side": "up",    "sources": [], "children": [] },
-    "codemap": { "label": ".codemap/",      "summary": "Persisted map IR and pass caches", "side": "down",  "sources": [], "children": [] },
+    "repo":    { "label": "Target repo", "external": true,    "summary": "The codebase being mapped", "side": "left",  "sources": [], "children": [] },
+    "user":    { "label": "Browser / VS Code", "external": true, "summary": "Where the map is viewed and navigated", "side": "right", "sources": [], "children": [] },
+    "claude":  { "label": "Claude API", "external": true,     "summary": "Structured calls and agent harness", "side": "up",    "sources": [], "children": [] },
+    "codemap": { "label": ".codemap/", "external": true,      "summary": "Persisted map IR and pass caches", "side": "down",  "sources": [], "children": [] },
 
     "compile": { "label": "Compile", "summary": "Source tree to map IR", "side": "in", "sources": ["packages/compile/"],
                  "children": ["ingest", "digest", "skeleton", "refine"] },
@@ -35,7 +35,7 @@
     { "id": "s7",  "from": "derive",   "to": "layout",   "label": "View" },
     { "id": "s8",  "from": "layout",   "to": "draw",     "label": "Positioned" },
     { "id": "s9",  "from": "draw",     "to": "user",     "label": "SVG" },
-    { "id": "s10", "from": "user",     "to": "derive",   "label": "focus change" },
+    { "id": "s10", "from": "user",     "to": "derive" },
     { "id": "s11", "from": "digest",   "to": "claude" },
     { "id": "s12", "from": "skeleton", "to": "claude" },
     { "id": "s13", "from": "refine",   "to": "claude" },

@@ -1,5 +1,5 @@
 import type { Side } from "@smap/ir";
-import { childContaining, childrenOf, type Index } from "./model";
+import { childContaining, childrenOf, isAmbient, type Index } from "./model";
 
 export interface Rect {
   x: number;
@@ -16,15 +16,14 @@ export interface Point {
 export type Dir = Exclude<Side, "in">;
 
 export const BOX_H = 44;
-const LAYER_GAP = 72;
+const LAYER_GAP = 40;
 const ROW_GAP = 20;
 /** Vertical space reserved for an edge passing through a layer. */
 const LANE_H = 8;
 
 export function boxSize(ix: Index, id: string): { w: number; h: number } {
   const label = ix.doc.boxes[id]?.label ?? id;
-  const hint = childrenOf(ix, id).length ? 18 : 0;
-  return { w: Math.min(240, Math.max(110, label.length * 7.5 + 32 + hint)), h: BOX_H };
+  return { w: Math.min(240, Math.max(110, label.length * 7.5 + 32)), h: BOX_H };
 }
 
 /** Merged edge labels collapse to the first one plus a count. */
@@ -58,17 +57,20 @@ const interiors = new WeakMap<Index, Map<string, Interior>>();
 /**
  * Lays out a box's children left → right by dataflow. Depends only on the
  * box's own subtree, so an interior looks the same from every focus.
+ * With `labels`, gaps widen to fit edge labels.
  */
-export function layoutInterior(ix: Index, id: string): Interior {
+export function layoutInterior(ix: Index, id: string, labels = false): Interior {
   let byId = interiors.get(ix);
   if (!byId) interiors.set(ix, (byId = new Map()));
-  let out = byId.get(id);
-  if (!out) byId.set(id, (out = computeInterior(ix, id)));
+  const key = `${id}|${labels}`;
+  let out = byId.get(key);
+  if (!out) byId.set(key, (out = computeInterior(ix, id, labels)));
   return out;
 }
 
-function computeInterior(ix: Index, id: string): Interior {
-  const nodes = childrenOf(ix, id);
+function computeInterior(ix: Index, id: string, labels: boolean): Interior {
+  // Ambient children sit in the frame header, outside the dataflow.
+  const nodes = childrenOf(ix, id).filter((c) => !isAmbient(ix, c));
   const edges = internalEdges(ix, id);
   const layer = assignLayers(nodes, edges.map((e) => [e.from, e.to]));
 
@@ -101,7 +103,7 @@ function computeInterior(ix: Index, id: string): Interior {
     Math.max(
       LAYER_GAP,
       ...edges
-        .filter((e) => e.labels.length && layer.get(e.from) === i)
+        .filter((e) => labels && e.labels.length && layer.get(e.from) === i)
         .map((e) => textWidth(labelText(e.labels)) + 32),
     ),
   );
@@ -141,7 +143,7 @@ function internalEdges(ix: Index, id: string): InteriorEdge[] {
   for (const e of ix.doc.edges) {
     const from = childContaining(ix, e.from, id);
     const to = childContaining(ix, e.to, id);
-    if (!from || !to || from === to) continue;
+    if (!from || !to || from === to || isAmbient(ix, from) || isAmbient(ix, to)) continue;
     const key = `${from}->${to}`;
     let ie = out.get(key);
     if (!ie) out.set(key, (ie = { key, from, to, labels: [] }));
@@ -231,16 +233,17 @@ const SIDE_VEC: Record<Side, [number, number]> = {
  */
 export function relativeDir(ix: Index, s: string, a: string): Dir {
   const p = ix.parent.get(a);
+  const placed = p !== undefined && layoutInterior(ix, p).rects;
   let dx: number;
   let dy: number;
-  if (p === undefined) {
+  if (!placed || !placed.has(s) || !placed.has(a)) {
+    // Top level, or an ambient box with no place in the interior: use declared sides.
     const [sx, sy] = SIDE_VEC[ix.doc.boxes[s]?.side ?? "in"];
     const [ax, ay] = SIDE_VEC[ix.doc.boxes[a]?.side ?? "in"];
     [dx, dy] = [sx - ax, sy - ay];
   } else {
-    const { rects } = layoutInterior(ix, p);
-    const rs = rects.get(s)!;
-    const ra = rects.get(a)!;
+    const rs = placed.get(s)!;
+    const ra = placed.get(a)!;
     [dx, dy] = [rs.x + rs.w / 2 - (ra.x + ra.w / 2), rs.y + rs.h / 2 - (ra.y + ra.h / 2)];
   }
   if (dx === 0 && dy === 0) return "right";

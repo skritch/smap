@@ -154,7 +154,7 @@ The HTTP server counts as external in the runtime view: once the app exists, the
 Open questions:
 - Grouping similar neighbors (several alerting sinks → one "Alerting" box) probably means letting external boxes have children.
 - Exact ID scheme.
-- On-disk layout beyond the map itself. For now the map lives at `.codemap/map.json` in the target repo.
+- On-disk layout beyond the map itself. Everything persisted lives in a `.smap/` directory in the target repo, as JSON files. For now that is just the map, `.smap/map.json`.
 
 ### 2.2 Rendering
 
@@ -273,7 +273,7 @@ The last two can happen alongside M2. Iterate on the fixtures until navigating *
 **M2: Dumb end-to-end.** *(next)*
 The goal is a fast loop on real code: compile, look, change the prompt, recompile. Deliberately crude.
 1. **Map validator** in `packages/ir`: shape, references, single parent, externals have no children. The renderer shows validation errors instead of crashing.
-2. **Single-call compile** in `packages/compile`: a CLI that reads the file tree (respecting `.gitignore`), README, manifests and entrypoint heads. One structured Claude call returns a full 2-level map: boxes, sides, axes, edges, external and ambient flags. It writes `.codemap/map.json`. No digests, caching or source map yet.
+2. **Single-call compile** in `packages/compile`: a CLI that reads the file tree (respecting `.gitignore`), README, manifests and entrypoint heads. One structured Claude call returns a full 2-level map: boxes, sides, axes, edges, external and ambient flags. It writes `.smap/map.json`. No digests, caching or source map yet.
 3. **Renderer loads a compiled map** (e.g. `?map=` or listed beside the fixtures).
 4. **First eval:** compile this repo and compare with `fixtures/smap.json`. Then one work repo.
 

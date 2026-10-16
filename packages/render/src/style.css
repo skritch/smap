@@ -2,6 +2,9 @@
 html, body { margin: 0; height: 100%; background: #111316; color: #d8dbe0; font: 13px system-ui, sans-serif; }
 #map { width: 100vw; height: 100vh; display: block; }
 header { position: fixed; top: 10px; left: 16px; display: flex; gap: 14px; align-items: center; }
+#problems { position: fixed; bottom: 12px; left: 16px; right: 16px; font: 12px ui-monospace, monospace; color: #d9b45f; }
+#problems.blocking { top: 48px; bottom: auto; color: #f08a7e; }
+#problems div { white-space: pre-wrap; }
 #fixture { background: #1c1f24; color: #d8dbe0; border: 1px solid #4a505a; border-radius: 4px; font: inherit; padding: 2px 4px; }
 #crumbs a { color: #8a919c; text-decoration: none; }
 #crumbs a + a::before { content: " › "; color: #555; }

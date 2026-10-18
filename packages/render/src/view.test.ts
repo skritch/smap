@@ -33,9 +33,9 @@ describe("deriveView", () => {
 
   it("lifts deep edges to the visible boxes and merges labels", () => {
     const v = deriveView(load(pipeline), { focus: "pipeline" });
-    const transformToModel = v.edges.find((e) => e.key === "transform->model");
-    expect(transformToModel?.labels).toEqual(["features.parquet"]);
-    expect(v.edges.some((e) => e.key === "transform->analysis")).toBe(true);
+    const detectToSegment = v.edges.find((e) => e.key === "detect->segment");
+    expect(detectToSegment?.labels).toEqual(["candidates.parquet"]);
+    expect(v.edges.some((e) => e.key === "detect->analysis")).toBe(true);
     expect(v.neighbors.get("analysis")).toBe("down");
   });
 
@@ -52,9 +52,9 @@ describe("deriveView", () => {
   });
 
   it("shows upstream and downstream stages around a nested focus", () => {
-    const v = deriveView(load(pipeline), { focus: "clean" });
+    const v = deriveView(load(pipeline), { focus: "preprocess" });
     expect(v.neighbors.get("ingest")).toBe("left");
-    expect(v.neighbors.get("transform")).toBe("right");
+    expect(v.neighbors.get("detect")).toBe("right");
     expect(v.neighbors.has("publish")).toBe(false);
   });
 });
@@ -76,8 +76,8 @@ describe("ambient boxes", () => {
   it("collapses edges to an ambient neighbor onto the frame", () => {
     const top = deriveView(load(pipeline), { focus: "pipeline" });
     expect(top.edges.filter((e) => e.to === "alerts").map((e) => e.key)).toEqual(["pipeline->alerts"]);
-    const clean = deriveView(load(pipeline), { focus: "clean" });
-    expect(clean.edges.filter((e) => e.to === "alerts").map((e) => e.key)).toEqual(["clean->alerts"]);
+    const preprocess = deriveView(load(pipeline), { focus: "preprocess" });
+    expect(preprocess.edges.filter((e) => e.to === "alerts").map((e) => e.key)).toEqual(["preprocess->alerts"]);
   });
 
   it("selecting an ambient box reveals what it connects to", () => {
@@ -85,7 +85,7 @@ describe("ambient boxes", () => {
     expect([...chip.related].sort()).toEqual(["logic", "routes"]);
     const alerts = deriveView(load(pipeline), { focus: "pipeline", selected: "alerts" }).selection!;
     expect([...alerts.related].sort()).toEqual(
-      ["clean_events", "dedupe_orders", "export_scores", "fetch_events", "score_users"],
+      ["dedupe_stations", "export_catalog", "fetch_waveforms", "filter_waveforms", "segment_events"],
     );
   });
 });
@@ -107,18 +107,18 @@ describe("selection", () => {
   });
 
   it("opens connected boxes up to the boxes really connected, within budget", () => {
-    const v = deriveView(load(pipeline), { focus: "pipeline", selected: "orders_db" });
-    expect(v.children.sort()).toEqual(["fetch_orders", "fetch_users"]);
-    expect([...v.selection!.related].sort()).toEqual(["fetch_orders", "fetch_users"]);
+    const v = deriveView(load(pipeline), { focus: "pipeline", selected: "registry" });
+    expect(v.children.sort()).toEqual(["fetch_responses", "fetch_stations"]);
+    expect([...v.selection!.related].sort()).toEqual(["fetch_responses", "fetch_stations"]);
   });
 
   it("keeps the full view's left-to-right order when opening boxes up", () => {
     const ix = load(pipeline);
     const scene = arrange(ix, deriveView(ix, { focus: "pipeline", selected: "alerts" }));
     const x = (id: string) => scene.boxes.find((b) => b.id === id)!.rect.x;
-    expect(x("fetch_events")).toBeLessThan(x("clean_events"));
-    expect(x("clean_events")).toBeLessThan(x("score_users"));
-    expect(x("score_users")).toBeLessThan(x("export_scores"));
+    expect(x("fetch_waveforms")).toBeLessThan(x("filter_waveforms"));
+    expect(x("filter_waveforms")).toBeLessThan(x("segment_events"));
+    expect(x("segment_events")).toBeLessThan(x("export_catalog"));
   });
 
   it("ignores a selection that is not visible", () => {
@@ -129,23 +129,23 @@ describe("selection", () => {
 
 describe("layoutInterior", () => {
   it("lays stages out left to right by dataflow", () => {
-    expect(xOrder(pipeline, "pipeline")).toEqual(["ingest", "clean", "transform", "model", "publish"]);
+    expect(xOrder(pipeline, "pipeline")).toEqual(["ingest", "preprocess", "detect", "segment", "publish"]);
     expect(xOrder(smap, "smap")).toEqual(["compile", "ir", "view"]);
     expect(xOrder(smap, "compile")).toEqual(["ingest", "digest", "skeleton", "refine"]);
   });
 
   it("keeps a chain of stages on one straight line", () => {
     const { rects } = layoutInterior(load(pipeline), "pipeline");
-    const ys = ["ingest", "clean", "transform", "model", "publish"].map((id) => rects.get(id)!.y);
+    const ys = ["ingest", "preprocess", "detect", "segment", "publish"].map((id) => rects.get(id)!.y);
     expect(new Set(ys).size).toBe(1);
   });
 
   it("gives edges that skip layers a lane clear of the boxes they pass", () => {
     const { rects, bends } = layoutInterior(load(pipeline), "pipeline");
-    const [lane] = bends.get("ingest->transform") ?? [];
-    const clean = rects.get("clean")!;
+    const [lane] = bends.get("ingest->detect") ?? [];
+    const preprocess = rects.get("preprocess")!;
     expect(lane).toBeDefined();
-    expect(lane!.y < clean.y || lane!.y > clean.y + clean.h).toBe(true);
+    expect(lane!.y < preprocess.y || lane!.y > preprocess.y + preprocess.h).toBe(true);
   });
 
   it("does not overlap boxes in any fixture view", () => {
@@ -181,17 +181,17 @@ describe("arrange", () => {
       return arrange(ix, deriveView(ix, { focus })).edges.some((e) => e.label);
     };
     expect(labelled(pipeline, "pipeline")).toBe(false);
-    expect(labelled(pipeline, "clean")).toBe(true);
+    expect(labelled(pipeline, "preprocess")).toBe(true);
     expect(labelled(app, "app")).toBe(true);
   });
 
   it("draws edges between neighbors on one side and staggers them by flow", () => {
     const ix = load(pipeline);
-    expect(deriveView(ix, { focus: "ingest" }).edges.some((e) => e.key === "clean->transform")).toBe(true);
-    const v = deriveView(ix, { focus: "transform" });
-    expect(v.edges.some((e) => e.key === "ingest->clean")).toBe(true);
+    expect(deriveView(ix, { focus: "ingest" }).edges.some((e) => e.key === "preprocess->detect")).toBe(true);
+    const v = deriveView(ix, { focus: "detect" });
+    expect(v.edges.some((e) => e.key === "ingest->preprocess")).toBe(true);
     const rects = new Map(arrange(ix, v).boxes.map((b) => [b.id, b.rect]));
-    expect(rects.get("ingest")!.x).toBeLessThan(rects.get("clean")!.x);
+    expect(rects.get("ingest")!.x).toBeLessThan(rects.get("preprocess")!.x);
   });
 
   it("lines neighbors up with the boxes they connect to", () => {

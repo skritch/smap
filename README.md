@@ -2,7 +2,7 @@
 
 A zoomable, hierarchical map of a codebase, meant as the primary way to navigate an unfamiliar repo. See [SPEC.md](SPEC.md).
 
-Right now maps are written by hand (or by an agent): there is no compiler yet.
+WIP: right now smaps are written by hand (or by an agent). Nothing "compiles" to a smap yet..
 
 ## Setup
 

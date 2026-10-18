@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port 5419",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build --base ./",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },

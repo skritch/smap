@@ -18,6 +18,8 @@ interface Loaded {
 
 async function loadFile(): Promise<Loaded | undefined> {
   // Only `npm run view` serves a map; its responses carry the file's path.
+  // A static build (the demo site) has only the fixtures.
+  if (!import.meta.env.DEV) return undefined;
   const res = await fetch("/@smap/map.json");
   const header = res.headers.get("x-smap-path");
   if (!header) return undefined;

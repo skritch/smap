@@ -1,31 +1,82 @@
-/* Placeholder styling: just enough to judge the arrangement. */
-html, body { margin: 0; height: 100%; background: #111316; color: #d8dbe0; font: 13px system-ui, sans-serif; }
+/* Amber terminal: thin rules and light monospace on warm black. */
+:root {
+  --bg: #1a1916;
+  --grid: rgba(255, 176, 0, 0.035);
+  --amber: #ffb000;
+  --amber-hi: #ffd27a;
+  --amber-mid: #c88a12;
+  --amber-lo: #6e5414;
+  --amber-faint: #3a2d0c;
+  --panel: rgba(255, 176, 0, 0.03);
+  --panel-frame: rgba(255, 176, 0, 0.015);
+  --alert: #ff5a36;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+html, body {
+  margin: 0; height: 100%;
+  color: var(--amber);
+  font: 300 12px var(--mono);
+  letter-spacing: 0.04em;
+  background:
+    radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.35) 100%),
+    linear-gradient(var(--grid) 1px, transparent 1px) 0 0 / 24px 24px,
+    linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0 / 24px 24px,
+    var(--bg);
+}
 #map { width: 100vw; height: 100vh; display: block; }
-header { position: fixed; top: 10px; left: 16px; display: flex; gap: 14px; align-items: center; }
-#problems { position: fixed; bottom: 12px; left: 16px; right: 16px; font: 12px ui-monospace, monospace; color: #d9b45f; }
-#problems.blocking { top: 48px; bottom: auto; color: #f08a7e; }
+::selection { background: var(--amber); color: var(--bg); }
+
+header {
+  position: fixed; top: 12px; left: 16px; right: 16px;
+  display: flex; gap: 16px; align-items: center;
+  padding-bottom: 8px; border-bottom: 1px solid var(--amber-faint);
+  text-transform: uppercase; letter-spacing: 0.14em; font-size: 11px;
+}
+header::before { content: "SMAP // SYSTEM MAP"; color: var(--amber-mid); }
+header::after { content: "● LIVE"; margin-left: auto; color: var(--amber-lo); }
+
+#fixture {
+  background: transparent; color: var(--amber);
+  border: 1px solid var(--amber-lo); border-radius: 0;
+  font: inherit; letter-spacing: inherit; text-transform: uppercase;
+  padding: 2px 6px; outline: none; cursor: pointer;
+}
+#fixture:hover, #fixture:focus { border-color: var(--amber); }
+#fixture option { background: var(--bg); }
+
+#crumbs a { color: var(--amber-lo); text-decoration: none; }
+#crumbs a:hover { color: var(--amber-mid); }
+#crumbs a + a::before { content: " / "; color: var(--amber-faint); }
+#crumbs a.current { color: var(--amber-hi); }
+
+#problems {
+  position: fixed; bottom: 12px; left: 16px; right: 16px;
+  font: 300 11px var(--mono); color: var(--amber-mid);
+  border-left: 1px solid var(--amber-mid); padding-left: 10px;
+}
+#problems.blocking { top: 56px; bottom: auto; color: var(--alert); border-color: var(--alert); }
 #problems div { white-space: pre-wrap; }
-#fixture { background: #1c1f24; color: #d8dbe0; border: 1px solid #4a505a; border-radius: 4px; font: inherit; padding: 2px 4px; }
-#crumbs a { color: #8a919c; text-decoration: none; }
-#crumbs a + a::before { content: " › "; color: #555; }
-#crumbs a.current { color: #d8dbe0; }
 
 .box { cursor: pointer; }
-.box rect { fill: #1c1f24; stroke: #4a505a; rx: 4; }
-.box.frame rect { fill: #15171a; stroke: #6a717c; }
-.box.neighbor rect { fill: #17191d; }
-.box.external rect { stroke-dasharray: 4 3; }
-.box.ambient rect { fill: #23262c; stroke: #5a616c; rx: 11; }
-.box.ambient text.label { font-size: 12px; fill: #b8bec7; }
-.box.selected rect, .box.related rect { stroke: #c9d1d9; }
-.box text { fill: #d8dbe0; dominant-baseline: middle; }
-.box text.axes { fill: #7d8590; font-size: 11px; }
-.box.frame text.label { font-weight: 600; }
+.box rect { fill: var(--panel); stroke: var(--amber-lo); stroke-width: 0.75; vector-effect: non-scaling-stroke; rx: 0; }
+.box:hover rect { stroke: var(--amber-mid); }
+.box.frame rect { fill: var(--panel-frame); stroke: var(--amber-mid); }
+.box.neighbor rect { fill: transparent; }
+.box.external rect { stroke-dasharray: 2 3; }
+.box.ambient rect { fill: rgba(255, 176, 0, 0.05); stroke: var(--amber-lo); rx: 11; }
+.box.ambient text.label { font-size: 11px; fill: var(--amber-mid); }
+.box.selected rect, .box.related rect { stroke: var(--amber-hi); fill: rgba(255, 176, 0, 0.08); }
+.box text { fill: var(--amber); dominant-baseline: middle; text-transform: uppercase; }
+.box text.label { font-size: 11.5px; }
+.box.selected text.label { fill: var(--amber-hi); }
+.box text.axes { fill: var(--amber-lo); font-size: 10px; letter-spacing: 0.03em; }
+.box.frame text.label { font-size: 13px; letter-spacing: 0.18em; fill: var(--amber-hi); }
 
-.edges path { fill: none; stroke: #7d8590; stroke-width: 1.25; vector-effect: non-scaling-stroke; }
-.edges path.related { stroke: #c9d1d9; stroke-width: 1.75; }
-#arrow path { fill: #7d8590; }
+.edges path { fill: none; stroke: var(--amber-lo); stroke-width: 0.75; vector-effect: non-scaling-stroke; }
+.edges path.related { stroke: var(--amber-hi); stroke-width: 1.25; }
+#arrow path { fill: none; stroke: var(--amber-mid); stroke-width: 1.5; }
 .edge-labels text {
-  fill: #9aa2ad; font-size: 11px; dominant-baseline: middle;
-  paint-order: stroke; stroke: #111316; stroke-width: 4px;
+  fill: var(--amber-mid); font-size: 10px; dominant-baseline: middle;
+  paint-order: stroke; stroke: var(--bg); stroke-width: 4px;
 }

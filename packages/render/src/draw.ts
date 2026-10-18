@@ -26,11 +26,11 @@ export function createRenderer(svgEl: SVGSVGElement, on: Handlers): (scene: Scen
     .attr("viewBox", "0 0 10 10")
     .attr("refX", 9)
     .attr("refY", 5)
-    .attr("markerWidth", 7)
-    .attr("markerHeight", 7)
+    .attr("markerWidth", 11)
+    .attr("markerHeight", 11)
     .attr("orient", "auto-start-reverse")
     .append("path")
-    .attr("d", "M0,0 L10,5 L0,10 z");
+    .attr("d", "M1,1.5 L9,5 L1,8.5");
   const frameLayer = svg.append("g").attr("class", "frame-layer");
   const edgeLayer = svg.append("g").attr("class", "edges");
   const nodeLayer = svg.append("g").attr("class", "nodes");

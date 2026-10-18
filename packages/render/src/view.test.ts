@@ -84,24 +84,41 @@ describe("ambient boxes", () => {
     const chip = deriveView(load(app), { focus: "app", selected: "config" }).selection!;
     expect([...chip.related].sort()).toEqual(["logic", "routes"]);
     const alerts = deriveView(load(pipeline), { focus: "pipeline", selected: "alerts" }).selection!;
-    expect([...alerts.related].sort()).toEqual(["clean", "ingest", "model", "publish"]);
+    expect([...alerts.related].sort()).toEqual(
+      ["clean_events", "dedupe_orders", "export_scores", "fetch_events", "score_users"],
+    );
   });
 });
 
 describe("selection", () => {
-  it("highlights the boxes connected to a selected external, without moving anything", () => {
+  it("narrows the view to a selected external and what it connects to", () => {
     const ix = load(app);
-    const plain = deriveView(ix, { focus: "app" });
     const v = deriveView(ix, { focus: "app", selected: "payments" });
-    expect([...v.selection!.related]).toEqual(["logic"]);
-    expect([...v.selection!.edges]).toEqual(["logic->payments"]);
-    const rects = (view: typeof v) => arrange(ix, view).boxes.map((b) => [b.id, b.rect]);
-    expect(rects(v)).toEqual(rects(plain));
+    expect(v.children).toEqual(["logic"]);
+    expect(v.chips).toEqual([]);
+    expect([...v.neighbors.keys()]).toEqual(["payments"]);
+    expect(v.edges.map((e) => e.key)).toEqual(["logic->payments"]);
+    const scene = arrange(ix, v);
+    const plain = arrange(ix, deriveView(ix, { focus: "app" }));
+    const width = (s: typeof scene) => s.boxes.find((b) => b.id === "payments")!.rect.w;
+    expect(width(scene)).toBeGreaterThan(width(plain));
+    // Same scale as the full view, not zoomed in on what remains.
+    expect(scene.bounds.w).toBeGreaterThanOrEqual(plain.bounds.w);
   });
 
-  it("highlights the visible box containing a deeper connection", () => {
+  it("opens connected boxes up to the boxes really connected, within budget", () => {
     const v = deriveView(load(pipeline), { focus: "pipeline", selected: "orders_db" });
-    expect([...v.selection!.related]).toEqual(["ingest"]);
+    expect(v.children.sort()).toEqual(["fetch_orders", "fetch_users"]);
+    expect([...v.selection!.related].sort()).toEqual(["fetch_orders", "fetch_users"]);
+  });
+
+  it("keeps the full view's left-to-right order when opening boxes up", () => {
+    const ix = load(pipeline);
+    const scene = arrange(ix, deriveView(ix, { focus: "pipeline", selected: "alerts" }));
+    const x = (id: string) => scene.boxes.find((b) => b.id === id)!.rect.x;
+    expect(x("fetch_events")).toBeLessThan(x("clean_events"));
+    expect(x("clean_events")).toBeLessThan(x("score_users"));
+    expect(x("score_users")).toBeLessThan(x("export_scores"));
   });
 
   it("ignores a selection that is not visible", () => {
@@ -135,8 +152,13 @@ describe("layoutInterior", () => {
     for (const doc of [app, pipeline, smap]) {
       const ix = load(doc);
       const focusable = Object.entries(ix.doc.boxes).filter(([, b]) => !b.external && !b.ambient);
-      for (const [focus] of focusable) {
-        const rects = arrange(ix, deriveView(ix, { focus })).boxes.filter((b) => b.role !== "frame");
+      const states = focusable.flatMap(([focus]) => {
+        const external = [...deriveView(ix, { focus }).neighbors.keys()].filter((n) => ix.doc.boxes[n]?.external);
+        return [{ focus }, ...external.map((selected) => ({ focus, selected }))];
+      });
+      for (const state of states) {
+        const focus = `${state.focus}${"selected" in state ? ` +${state.selected}` : ""}`;
+        const rects = arrange(ix, deriveView(ix, state)).boxes.filter((b) => b.role !== "frame");
         for (const [i, a] of rects.entries()) {
           for (const b of rects.slice(i + 1)) {
             const overlap =

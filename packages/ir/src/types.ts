@@ -2,6 +2,9 @@
 
 export type Side = "in" | "left" | "right" | "up" | "down";
 
+/** What each direction means inside a box; directions with no meaning are left out. */
+export type Axes = Partial<Record<Exclude<Side, "in">, string>>;
+
 export interface Box {
   label: string;
   /** Outside the codebase (a database, an API, the user). Never has children. */
@@ -14,7 +17,7 @@ export interface Box {
   summary?: string;
   side: Side;
   /** What this box's interior directions mean. */
-  axes?: string;
+  axes?: Axes;
   sources: string[];
   children: string[];
 }

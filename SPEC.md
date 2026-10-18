@@ -68,7 +68,7 @@ The map is a map. Things stay where they are across zooms, regenerations and edi
 
 ### 1.9 Interaction
 
-- Click a box → zoom into it; click an external box → highlight what connects to it. Getting to the code is a separate action.
+- Click a box → zoom into it; click an external box → narrow the view to what connects to it. Getting to the code is a separate action.
 - Rearrange with natural-language input ("this section is too granular", "group these differently").
 - Alternate views and dimensions on request (e.g. the tests layer).
 - **Targets:** browser first (prototype), then a VS Code plugin as an alternative to the textual view.
@@ -107,7 +107,7 @@ The v1 IR is deliberately stupid: nodes, edges, directions. It's called a `MapDo
 | `ambient`  | optional; touches many things (config, alerting, logging). Edges kept, drawing summarized |
 | `summary`  | one line                                                                              |
 | `side`     | `in \| left \| right \| up \| down`, placement relative to parent                     |
-| `axes`     | optional sentence describing what this box's interior directions mean                 |
+| `axes`     | optional; what this box's interior directions mean, `{left?, right?, up?, down?}`      |
 | `sources`  | files and/or symbol names this box covers (see §2.4)                                  |
 | `children` | child boxes (may be unexpanded / not yet computed)                                    |
 
@@ -131,7 +131,7 @@ Example fixture (`fixtures/app.json`; there are also `pipeline.json` and `smap.j
   "startFocus": "app",
   "boxes": {
     "app":      { "label": "App", "summary": "Order service", "side": "in",
-                  "axes": "left = user, right = backend services, down = persistence",
+                  "axes": { "left": "user", "right": "backend services", "down": "persistence" },
                   "sources": ["src/"], "children": ["routes", "logic", "config"] },
     "server":   { "label": "HTTP server", "external": true, "side": "left",  "sources": ["src/main.py"], "children": [] },
     "db":       { "label": "Postgres", "external": true,    "side": "down",  "sources": ["src/db.py"],   "children": [] },
@@ -161,6 +161,7 @@ Open questions:
 - Browser first. Must also work later inside a VS Code webview. SVG + D3, built with Vite (`packages/render`).
 - Pipeline: `MapDoc` + view state (current focus, selection) → visible set → layout → keyed D3 joins.
 - **Focus model:** the focused box is drawn as a frame with its children inside. Context is siblings of the focus and of its ancestors, shown only if an edge connects them to the frame (top-level neighbors always show). Each one sits on the side it occupied one level up, so zooming into Routing puts Business logic to its right.
+- **Axes:** a small compass beside the frame title, with an arrow only for each direction that has a meaning. Hovering an arrow shows its meaning.
 - **Edges:** lifted to the nearest visible box and merged. Opposite pairs become one double-ended arrow.
   - Neighbors on the same side keep the edges between them, unlabeled. They are offset outward by flow order, so upstream sits further out.
   - Straight unless a box is in the way; curved around obstacles otherwise.
@@ -171,7 +172,9 @@ Open questions:
   - Outside the frame, all their edges collapse into one edge to the frame.
   - Selecting one reveals its real connections.
   - Config is ambient inside the app: it is injected and becomes ambient state. The startup flow, where config instantiates the app, belongs to a separate lifecycle view.
-- **External and ambient boxes** are selected, not zoomed: clicking one highlights the visible boxes that connect to it and dims the rest. The layout doesn't move. Finding the exact file is done by zooming in. Later, selecting might rearrange the interior to bring the connected subcomponents forward.
+- **External and ambient boxes** are selected, not zoomed. The selection is kept in the URL alongside the focus.
+  - Selecting an external neighbor spotlights it: unrelated boxes drop out, it grows and the view recenters on what remains, at the same scale. The room freed opens connected boxes up to the boxes inside them that the connections really reach, a level at a time within the detail budget, keeping their left → right order.
+  - Selecting an ambient chip highlights the boxes it connects to and dims the rest, without moving anything.
 - **Detail budget:** decided by the renderer, not the LLM. Aim for roughly 5–8 things per view. Today: edge labels drop out when a view has more than 8 edges. Later: collapse the rest into groups the renderer makes. Only those groups show a count ("+N"). A box with children is an abstraction, and its contents are not counted or hinted at.
 - **Transitions:** keyed by stable IDs, D3-style enter/update/exit, so zooming and edits animate rather than redraw. Focus changes are discrete steps with animated transitions. Boxes and edges appearing or disappearing travel with their parent box (shrinking into it, growing out of it), like a camera move.
 - **Navigation:** click a box to zoom in. Click the frame, empty background, or the breadcrumbs, or press Esc, to zoom out.

@@ -1,8 +1,15 @@
 import * as d3 from "d3";
 import type { Scene, SceneBox, SceneEdge } from "./arrange";
-import type { Rect } from "./geometry";
+import type { Dir, Rect } from "./geometry";
 
 const DURATION = 500;
+/** Axis arrows, drawn pointing right and turned into place. */
+const COMPASS: [Dir, number][] = [
+  ["right", 0],
+  ["down", 90],
+  ["left", 180],
+  ["up", 270],
+];
 
 export interface Handlers {
   /** A non-frame box was clicked. */
@@ -24,13 +31,13 @@ export function createRenderer(svgEl: SVGSVGElement, on: Handlers): (scene: Scen
     .append("marker")
     .attr("id", "arrow")
     .attr("viewBox", "0 0 10 10")
-    .attr("refX", 9)
+    .attr("refX", 10)
     .attr("refY", 5)
-    .attr("markerWidth", 11)
-    .attr("markerHeight", 11)
+    .attr("markerWidth", 12)
+    .attr("markerHeight", 12)
     .attr("orient", "auto-start-reverse")
     .append("path")
-    .attr("d", "M1,1.5 L9,5 L1,8.5");
+    .attr("d", "M3,1.5 L10,5 L3,8.5 z");
   const frameLayer = svg.append("g").attr("class", "frame-layer");
   const edgeLayer = svg.append("g").attr("class", "edges");
   const nodeLayer = svg.append("g").attr("class", "nodes");
@@ -43,19 +50,37 @@ export function createRenderer(svgEl: SVGSVGElement, on: Handlers): (scene: Scen
     const t = d3.transition().duration(first ? 0 : DURATION);
     const now = new Map(scene.boxes.map((b) => [b.id, b]));
     const ids = new Set(now.keys());
-    // A box entering or leaving with its parent travels with it: it is carried
-    // from (or into) where the parent was (or goes), scaled to match.
+    // Where a box is drawn, or failing that, the area its drawn descendants cover.
+    const region = (boxes: Map<string, SceneBox>, id: string): Rect | undefined => {
+      const own = boxes.get(id);
+      if (own) return own.rect;
+      const inside = [...boxes.values()].filter((b) => b.ancestors.includes(id)).map((b) => b.rect);
+      return inside.length ? union(inside) : undefined;
+    };
+    // A box entering or leaving with an ancestor travels with it: it is carried
+    // from (or into) where the ancestor was (or goes), scaled to match. A box
+    // opening up into the boxes inside it grows into them, and back.
     const enterFrom = (d: SceneBox) => {
       const was = prev.get(d.id);
       if (was) return translate(was.rect);
-      const parentWas = d.parent && prev.get(d.parent);
-      const parentNow = d.parent && now.get(d.parent);
-      return parentWas && parentNow ? carry(d.rect, parentNow.rect, parentWas.rect) : translate(d.rect);
+      const opened = region(prev, d.id);
+      if (opened) return carry(d.rect, d.rect, opened);
+      for (const a of d.ancestors) {
+        const from = region(prev, a);
+        const to = region(now, a);
+        if (from && to) return carry(d.rect, to, from);
+      }
+      return translate(d.rect);
     };
     const exitTo = (d: SceneBox) => {
-      const parentWas = d.parent && prev.get(d.parent);
-      const parentNow = d.parent && now.get(d.parent);
-      return parentWas && parentNow ? carry(d.rect, parentWas.rect, parentNow.rect) : translate(d.rect);
+      const opened = region(now, d.id);
+      if (opened) return carry(d.rect, d.rect, opened);
+      for (const a of d.ancestors) {
+        const from = region(prev, a);
+        const to = region(now, a);
+        if (from && to) return carry(d.rect, from, to);
+      }
+      return translate(d.rect);
     };
     const { x, y, w, h } = scene.bounds;
     svg.transition(t).attr("viewBox", `${x} ${y} ${w} ${h}`);
@@ -82,14 +107,18 @@ export function createRenderer(svgEl: SVGSVGElement, on: Handlers): (scene: Scen
             g.append("text")
               .attr("class", "label")
               .attr("text-anchor", "middle")
+              // Labels are all capitals, so center the cap height (Plex Mono's is 0.7em).
+              .attr("dy", "0.35em")
               .text((d) => d.label)
+              .style("font-size", (d) => labelFont(prev.get(d.id) ?? d).size)
+              .style("letter-spacing", (d) => labelFont(prev.get(d.id) ?? d).spacing)
               .attr("x", function (d) {
                 return labelPos(prev.get(d.id) ?? d, this).x;
               })
               .attr("y", function (d) {
                 return labelPos(prev.get(d.id) ?? d, this).y;
               });
-            g.append("text").attr("class", "axes");
+            appendCompass(g);
             return g;
           },
           (update) => update,
@@ -121,17 +150,30 @@ export function createRenderer(svgEl: SVGSVGElement, on: Handlers): (scene: Scen
         .select<SVGTextElement>("text.label")
         .text((d) => d.label)
         .transition(t)
+        .style("font-size", (d) => labelFont(d).size)
+        .style("letter-spacing", (d) => labelFont(d).spacing)
         .attr("x", function (d) {
           return labelPos(d, this).x;
         })
         .attr("y", function (d) {
           return labelPos(d, this).y;
         });
-      merged
-        .select<SVGTextElement>("text.axes")
-        .text((d) => (d.role === "frame" ? (d.axes ?? "") : ""))
-        .attr("x", 14)
-        .attr("y", 40);
+      // The compass sits just past the frame title and appears once it has settled.
+      const compass = merged.select<SVGGElement>("g.compass");
+      compass.selectAll<SVGGElement, unknown>("g.arrow").style("display", function () {
+        const box = d3.select<SVGGElement, SceneBox>(this.closest<SVGGElement>("g.box")!).datum();
+        return box.axes?.[this.dataset.dir as Dir] ? null : "none";
+      });
+      compass
+        .attr("transform", function (d) {
+          const title = (this.parentNode as SVGGElement).querySelector<SVGTextElement>("text.label")!;
+          return `translate(${14 + measure(d, title) + 20},22)`;
+        })
+        .style("opacity", 0)
+        .transition()
+        .delay(first ? 0 : DURATION)
+        .duration(first ? 0 : DURATION / 2)
+        .style("opacity", (d) => (d.axes ? 1 : 0));
     };
     joinBoxes(frameLayer, scene.boxes.filter((b) => b.role === "frame"));
     joinBoxes(nodeLayer, scene.boxes.filter((b) => b.role !== "frame"));
@@ -225,12 +267,62 @@ export function createRenderer(svgEl: SVGSVGElement, on: Handlers): (scene: Scen
 }
 
 /**
+ * Label type per role. Set here rather than in the stylesheet so it tweens
+ * with the box instead of snapping when the role class changes.
+ */
+function labelFont(b: SceneBox): { size: string; spacing: string } {
+  const [size, spacing] = b.role === "frame" ? [13, 2.34] : b.role === "ambient" ? [11, 0.44] : [11.5, 0.46];
+  return { size: `${size * b.scale}px`, spacing: `${spacing * b.scale}px` };
+}
+
+/**
  * Labels stay centered (text-anchor middle) in every role, so moving between
- * roles is a plain position tween. The frame title sits at the top left.
+ * roles is a plain position tween. The frame title sits at the top left; its
+ * width is measured at the frame's type, which the label may not have yet.
  */
 function labelPos(b: SceneBox, el: SVGTextElement): { x: number; y: number } {
-  if (b.role === "frame") return { x: 14 + el.getComputedTextLength() / 2, y: 22 };
-  return { x: b.rect.w / 2, y: b.rect.h / 2 };
+  if (b.role !== "frame") return { x: b.rect.w / 2, y: b.rect.h / 2 };
+  return { x: 14 + measure(b, el) / 2, y: 22 };
+}
+
+/** Width of `b`'s label set in its type, which `el` may not have yet. */
+function measure(b: SceneBox, el: SVGTextElement): number {
+  const { fontSize, letterSpacing } = el.style;
+  const font = labelFont(b);
+  el.style.fontSize = font.size;
+  el.style.letterSpacing = font.spacing;
+  const w = el.getComputedTextLength();
+  el.style.fontSize = fontSize;
+  el.style.letterSpacing = letterSpacing;
+  return w;
+}
+
+/**
+ * Arrows for the directions a frame's axes give meaning to; hovering one
+ * shows its meaning beside the compass.
+ */
+function appendCompass(g: d3.Selection<SVGGElement, SceneBox, SVGGElement, unknown>) {
+  const compass = g
+    .append("g")
+    .attr("class", "compass")
+    .style("opacity", 0)
+    .on("click", (ev: MouseEvent) => ev.stopPropagation());
+  compass.append("circle").attr("r", 1.25);
+  const meaning = compass.append("text").attr("class", "meaning").attr("x", 18).attr("dy", "0.35em");
+  for (const [dir, angle] of COMPASS) {
+    const arrow = compass
+      .append("g")
+      .attr("class", "arrow")
+      .attr("data-dir", dir)
+      .attr("transform", `rotate(${angle})`)
+      .on("mouseenter", function () {
+        const box = d3.select<SVGGElement, SceneBox>(this.closest<SVGGElement>("g.box")!).datum();
+        meaning.text(box.axes?.[dir] ?? "");
+      })
+      .on("mouseleave", () => meaning.text(""));
+    arrow.append("rect").attr("x", 2).attr("y", -6).attr("width", 12).attr("height", 12);
+    arrow.append("path").attr("d", "M6,-2.75 L11,0 L6,2.75 z");
+  }
 }
 
 function opacity(emphasis: string | undefined): number {
@@ -249,6 +341,14 @@ function mapRect(from: Rect, to: Rect): string {
   const kx = to.w / from.w;
   const ky = to.h / from.h;
   return `translate(${to.x - from.x * kx},${to.y - from.y * ky}) scale(${kx},${ky})`;
+}
+
+function union(rs: Rect[]): Rect {
+  const x0 = Math.min(...rs.map((r) => r.x));
+  const y0 = Math.min(...rs.map((r) => r.y));
+  const x1 = Math.max(...rs.map((r) => r.x + r.w));
+  const y1 = Math.max(...rs.map((r) => r.y + r.h));
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
 
 function translate(r: Rect): string {

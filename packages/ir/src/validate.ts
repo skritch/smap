@@ -6,6 +6,7 @@ export interface Validation {
 }
 
 const SIDES = ["in", "left", "right", "up", "down"];
+const DIRS = ["left", "right", "up", "down"];
 const BOX_KEYS = ["label", "summary", "side", "axes", "sources", "children", "external", "ambient"];
 const EDGE_KEYS = ["id", "from", "to", "label"];
 
@@ -33,8 +34,13 @@ export function validate(doc: unknown): Validation {
     }
     if (typeof box.label !== "string" || !box.label) errors.push(`${at}: "label" must be a non-empty string`);
     if (!SIDES.includes(box.side as string)) errors.push(`${at}: "side" must be one of ${SIDES.join(", ")}`);
-    for (const key of ["summary", "axes"]) {
-      if (box[key] !== undefined && typeof box[key] !== "string") errors.push(`${at}: "${key}" must be a string`);
+    if (box.summary !== undefined && typeof box.summary !== "string") errors.push(`${at}: "summary" must be a string`);
+    const axes = box.axes;
+    // Older maps gave axes as one sentence; they still render, without the compass.
+    if (typeof axes === "string") warnings.push(`${at}: "axes" is now an object like {"left": "user"}; the sentence is ignored`);
+    else if (axes !== undefined) {
+      const ok = isObject(axes) && Object.entries(axes).every(([k, v]) => DIRS.includes(k) && typeof v === "string" && v);
+      if (!ok) errors.push(`${at}: "axes" must map some of ${DIRS.join(", ")} to non-empty strings`);
     }
     for (const key of ["external", "ambient"]) {
       if (box[key] !== undefined && typeof box[key] !== "boolean") errors.push(`${at}: "${key}" must be true or false`);

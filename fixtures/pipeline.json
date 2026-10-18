@@ -2,7 +2,7 @@
   "startFocus": "pipeline",
   "boxes": {
     "pipeline":  { "label": "Churn pipeline", "summary": "Nightly batch DAG from raw events to churn scores", "side": "in",
-                   "axes": "left → right = dataflow, up = alerting, down = ad-hoc reads",
+                   "axes": { "left": "upstream: sources", "right": "downstream: outputs", "up": "alerting", "down": "ad-hoc reads" },
                    "sources": ["pipeline/"], "children": ["ingest", "clean", "transform", "model", "publish", "config"] },
 
     "s3_raw":    { "label": "S3 raw events", "external": true,   "summary": "Clickstream dumps, one prefix per day", "side": "left",  "sources": [], "children": [] },

@@ -17,7 +17,7 @@ The user views it with `npm run view`, and the page reloads whenever the file ch
   "startFocus": "app",
   "boxes": {
     "app":      { "label": "App", "summary": "Order service", "side": "in",
-                  "axes": "left = user, right = backend services, down = persistence",
+                  "axes": { "left": "user", "right": "backend services", "down": "persistence" },
                   "sources": ["src/"], "children": ["routes", "logic", "config"] },
     "routes":   { "label": "Routing", "side": "in", "sources": ["src/routes/"], "children": [] },
     "logic":    { "label": "Business logic", "side": "in", "sources": ["src/orders.py"], "children": [] },
@@ -48,7 +48,7 @@ More complete examples are in the smap repo's `fixtures/`: a web app, a data pip
 | `sources`  | yes | Repo-relative files or directories this box covers. May be empty for things outside the repo. |
 | `children` | yes | Ids of the boxes inside this one. May be empty. Every box has at most one parent. |
 | `summary`  | no  | One line. |
-| `axes`     | no  | What directions mean inside this box, e.g. `"left → right = dataflow, down = persistence"`. Shown in the box's header. |
+| `axes`     | no  | What directions mean inside this box, as an object with any of `left`, `right`, `up`, `down`, e.g. `{"left": "upstream: sources", "right": "downstream: outputs", "down": "persistence"}`. Leave out directions with no meaning. Shown as arrows beside the box's title; hovering one shows its meaning. |
 | `external` | no  | `true` for things outside the codebase: databases, third-party APIs, queues, the HTTP server in front of the app. They can't have children. |
 | `ambient`  | no  | `true` for things that touch almost everything: config, logging, alerting, metrics. The map keeps their edges, but the viewer summarizes them instead of drawing each one. |
 
@@ -69,7 +69,7 @@ More complete examples are in the smap repo's `fixtures/`: a web app, a data pip
 
 ## Conventions
 
-- **Directions mean something.** Pick a main flow for each box's interior and state it in `axes`. For a web app: left = toward the user, right = backend services, down = persistence. For a pipeline: left → right = dataflow, up = alerting, down = side reads. The viewer lays children out left → right along the edges, so edges should point along the flow.
+- **Directions mean something.** Pick a main flow for each box's interior and state it in `axes`. For a web app: left = toward the user, right = backend services, down = persistence. For a pipeline: left = upstream, right = downstream, up = alerting, down = side reads. The viewer lays children out left → right along the edges, so edges should point along the flow.
 - **About 5–8 things per box.** If a box has more children, group them into intermediate boxes. Two or three levels deep is plenty for a first map.
 - **Keep edges light.** An edge says "these are connected", not a protocol spec. Don't add both `a → b` and `b → a`; one edge is enough, and the viewer would merge them anyway.
 - **Group similar neighbors.** Three alerting sinks become one "Alerting" box. Several on-disk stores become one.

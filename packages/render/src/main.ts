@@ -5,8 +5,8 @@ import { createRenderer } from "./draw";
 import { ancestors, indexDoc } from "./model";
 import { deriveView, type ViewState } from "./view";
 
-// Maps to choose from: the fixtures, plus the file passed to `npm run view`
-// (served at /@smap/map.json) when there is one.
+// Maps to choose from: the file passed to `npm run view` (served at
+// /@smap/map.json) when there is one, otherwise the fixtures.
 const fixtures = import.meta.glob<unknown>("../../../fixtures/*.json", { eager: true, import: "default" });
 const FILE = "file";
 
@@ -35,11 +35,13 @@ async function loadFile(): Promise<Loaded | undefined> {
 async function main() {
   const maps = new Map<string, Loaded>();
   const file = await loadFile();
+  // Viewing a repo's map shows only that map; the fixtures are for development.
   if (file) maps.set(FILE, file);
-  for (const [path, doc] of Object.entries(fixtures)) {
-    const name = path.split("/").pop()!.replace(/\.json$/, "");
-    maps.set(name, { label: name, doc });
-  }
+  else
+    for (const [path, doc] of Object.entries(fixtures)) {
+      const name = path.split("/").pop()!.replace(/\.json$/, "");
+      maps.set(name, { label: name, doc });
+    }
   const chosen = new URLSearchParams(location.search).get("fixture") ?? (file ? FILE : "app");
 
   // Dev-only map switcher; switching starts the new map at its start focus.
@@ -75,13 +77,13 @@ function showProblems(errors: string[], warnings: string[]) {
 function start(doc: MapDoc) {
   const ix = indexDoc(doc);
 
-  // The focus lives in the URL hash, so reload and browser back/forward work.
-  // External and ambient boxes are selected rather than focused.
-  let selected: string | undefined;
-
+  // Focus and selection live in the URL hash (`#focus` or `#focus+selected`),
+  // so reload and browser back/forward work. External and ambient boxes are
+  // selected rather than focused.
   function readState(): ViewState {
-    const id = decodeURIComponent(location.hash.slice(1));
+    const [id = "", sel] = location.hash.slice(1).split("+").map(decodeURIComponent);
     const focusable = Object.hasOwn(doc.boxes, id) && !selectable(id);
+    const selected = sel !== undefined && selectable(sel) ? sel : undefined;
     return { focus: focusable ? id : doc.startFocus, selected };
   }
 
@@ -90,14 +92,13 @@ function start(doc: MapDoc) {
     return !!(box?.external || box?.ambient);
   }
 
-  function select(id: string | undefined) {
-    if (id === selected) return;
-    selected = id;
-    update();
+  function go(focus: string, selected?: string) {
+    location.hash = encodeURIComponent(focus) + (selected ? `+${encodeURIComponent(selected)}` : "");
   }
 
-  function go(id: string) {
-    location.hash = encodeURIComponent(id);
+  function select(id: string | undefined) {
+    const state = readState();
+    if (id !== state.selected) go(state.focus, id);
   }
 
   function up() {
@@ -107,10 +108,10 @@ function start(doc: MapDoc) {
   }
 
   const render = createRenderer(document.querySelector<SVGSVGElement>("#map")!, {
-    click: (id) => (selectable(id) ? select(id === selected ? undefined : id) : go(id)),
+    click: (id) => (selectable(id) ? select(id === readState().selected ? undefined : id) : go(id)),
     up,
     // Empty space clears a selection first; otherwise it zooms out, like clicking the frame.
-    background: () => (selected ? select(undefined) : up()),
+    background: () => (readState().selected ? select(undefined) : up()),
   });
 
   function renderCrumbs(focus: string) {
@@ -132,12 +133,9 @@ function start(doc: MapDoc) {
     renderCrumbs(state.focus);
   }
 
-  window.addEventListener("hashchange", () => {
-    selected = undefined;
-    update();
-  });
+  window.addEventListener("hashchange", update);
   window.addEventListener("keydown", (ev) => {
-    if (ev.key === "Escape" && selected) select(undefined);
+    if (ev.key === "Escape" && readState().selected) select(undefined);
     else if (ev.key === "Escape" || ev.key === "Backspace") up();
   });
   update();

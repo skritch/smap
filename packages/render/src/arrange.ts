@@ -1,5 +1,17 @@
-import { boxSize, labelText, layoutInterior, pack, textWidth, type Dir, type Point, type Rect } from "./geometry";
-import type { Index } from "./model";
+import {
+  boxSize,
+  labelText,
+  layoutInterior,
+  layoutNodes,
+  nestedLayers,
+  pack,
+  textWidth,
+  type Dir,
+  type Point,
+  type Rect,
+} from "./geometry";
+import type { Axes } from "@smap/ir";
+import { ancestors, type Index } from "./model";
 import type { View, ViewEdge } from "./view";
 
 export type Role = "frame" | "child" | "neighbor" | "ambient";
@@ -9,9 +21,13 @@ export interface SceneBox {
   role: Role;
   rect: Rect;
   label: string;
-  axes?: string;
+  /** Only on frames. Ignored when an older map gives a sentence. */
+  axes?: Axes;
   external: boolean;
-  parent?: string;
+  /** Nearest first. */
+  ancestors: string[];
+  /** Size relative to the box's usual size; the label scales with it. */
+  scale: number;
   emphasis?: "selected" | "related" | "dimmed";
 }
 
@@ -37,7 +53,8 @@ export interface Scene {
 
 const PAD = 28;
 const TITLE_H = 36;
-const AXES_H = 16;
+/** Room beside the frame title for the compass of axis arrows. */
+const COMPASS_W = 40;
 const MIN_FRAME = { w: 280, h: 160 };
 const CHIP_H = 22;
 const CHIP_GAP = 8;
@@ -60,25 +77,37 @@ const CLEARANCE = 6;
 /** How far a detouring edge passes beyond the boxes it goes around. */
 const LANE_OFFSET = 12;
 const OPPOSITE: Record<Dir, Dir> = { left: "right", right: "left", up: "down", down: "up" };
+/** How much larger a spotlit box is drawn. */
+const SPOTLIGHT_SCALE = 1.4;
 
 export function arrange(ix: Index, view: View): Scene {
   const labels = view.edges.length <= LABEL_BUDGET;
-  const interior = layoutInterior(ix, view.focus, labels);
-  const axes = ix.doc.boxes[view.focus]?.axes;
-  const header = TITLE_H + (axes ? AXES_H : 0);
+  // A spotlight's interior mixes depths, so it is laid out afresh, keeping
+  // the order the boxes have in the full view.
+  const inFrame = new Set(view.children);
+  const interior = view.spotlight
+    ? layoutNodes(
+        ix,
+        view.children,
+        view.edges.filter((e) => inFrame.has(e.from) && inFrame.has(e.to)),
+        labels,
+        nestedLayers(ix, view.focus, view.children),
+      )
+    : layoutInterior(ix, view.focus, labels);
+  const scaleOf = (id: string) => (id === view.spotlight?.id ? SPOTLIGHT_SCALE : 1);
   // Ambient chips line the right of the header, beside the title.
   const chipW = view.chips.map((id) => textWidth(ix.doc.boxes[id]?.label ?? id, 12) + 24);
   const chipsW = chipW.reduce((t, w) => t + w + CHIP_GAP, 0);
-  const titleW = textWidth(ix.doc.boxes[view.focus]?.label ?? view.focus, 14);
+  // Matches the frame title's type in draw.ts.
+  const titleW = textWidth(ix.doc.boxes[view.focus]?.label ?? view.focus, 13, 2.34) + COMPASS_W;
   const fw = Math.max(
     MIN_FRAME.w,
     interior.w + 2 * PAD,
-    textWidth(axes ?? "") + 2 * PAD,
     titleW + chipsW + 2 * PAD + 24,
   );
-  const fh = Math.max(MIN_FRAME.h, interior.h + 2 * PAD + header);
+  const fh = Math.max(MIN_FRAME.h, interior.h + 2 * PAD + TITLE_H);
   const ox = (fw - interior.w) / 2;
-  const oy = header + (fh - header - interior.h) / 2;
+  const oy = TITLE_H + (fh - TITLE_H - interior.h) / 2;
 
   const rects = new Map<string, Rect>([[view.focus, { x: 0, y: 0, w: fw, h: fh }]]);
   for (const [id, r] of interior.rects) rects.set(id, { ...r, x: r.x + ox, y: r.y + oy });
@@ -116,7 +145,10 @@ export function arrange(ix: Index, view: View): Scene {
     const targets = new Map(ids.map((id) => [id, target(id)]));
     ids.sort((a, b) => targets.get(a)! - targets.get(b)!);
 
-    const sizes = ids.map((id) => boxSize(ix, id));
+    const sizes = ids.map((id) => {
+      const { w, h } = boxSize(ix, id);
+      return { w: w * scaleOf(id), h: h * scaleOf(id) };
+    });
     const starts = pack(
       ids.map((id, i) => ({ center: targets.get(id)!, size: vertical ? sizes[i]!.h : sizes[i]!.w })),
       STACK_GAP,
@@ -141,9 +173,10 @@ export function arrange(ix: Index, view: View): Scene {
       role,
       rect: rects.get(id)!,
       label: b?.label ?? id,
-      axes: b?.axes,
+      axes: role === "frame" && typeof b?.axes === "object" ? b.axes : undefined,
       external: b?.external ?? false,
-      parent: ix.parent.get(id),
+      ancestors: ancestors(ix, id),
+      scale: scaleOf(id),
       emphasis: !sel || role === "frame" ? undefined : id === sel.id ? "selected" : sel.related.has(id) ? "related" : "dimmed",
     };
   };
@@ -181,7 +214,10 @@ export function arrange(ix: Index, view: View): Scene {
   });
   spreadLabels(edges);
 
-  return { focus: view.focus, boxes, edges, bounds: pad(union([...rects.values()]), MARGIN) };
+  // A spotlight keeps the full view's scale, centered on what remains.
+  let bounds = pad(union([...rects.values()]), MARGIN);
+  if (view.spotlight) bounds = atLeast(bounds, arrange(ix, view.spotlight.base).bounds);
+  return { focus: view.focus, boxes, edges, bounds };
 }
 
 interface RouteCtx {
@@ -197,10 +233,13 @@ function routeEdge(e: ViewEdge, [pa, pb]: [Dir, Dir], [p0, p1]: [Point, Point], 
 
   if (ctx.bends.length) {
     const pts = [p0, ...ctx.bends, p1];
+    const vertical = pa === "up" || pa === "down";
     const d = pts.slice(1).reduce((acc, q, i) => {
       const p = pts[i]!;
       const mx = (p.x + q.x) / 2;
-      return `${acc} C${mx},${p.y} ${mx},${q.y} ${q.x},${q.y}`;
+      const my = (p.y + q.y) / 2;
+      const [c0, c1] = vertical ? [`${p.x},${my}`, `${q.x},${my}`] : [`${mx},${p.y}`, `${mx},${q.y}`];
+      return `${acc} C${c0} ${c1} ${q.x},${q.y}`;
     }, `M${p0.x},${p0.y}`);
     const first = ctx.bends[0]!;
     const labelAt = { x: (p0.x + first.x) / 2, y: (p0.y + first.y) / 2 };
@@ -392,13 +431,14 @@ function spreadPorts(edges: ViewEdge[], sides: Map<string, [Dir, Dir]>, rects: M
 }
 
 /**
- * An edge from a side neighbor whose straight path is blocked by boxes inside
- * the frame passes just below (or above) each blocker, then arrives at its
- * target's facing side like any other input running parallel to the flow.
+ * An edge from a neighbor whose straight path is blocked by boxes inside the
+ * frame passes just beside each blocker (below or above for side neighbors,
+ * right or left for those above and below), then arrives at its target's
+ * facing side like any other input running parallel to the flow.
  */
 function aroundBlockers(e: ViewEdge, [p0, p1]: [Point, Point], rects: Map<string, Rect>, view: View): Point[] {
   const side = view.neighbors.get(e.from) ?? view.neighbors.get(e.to);
-  if (!side || (side !== "left" && side !== "right")) return [];
+  if (!side) return [];
   if (view.neighbors.has(e.from) === view.neighbors.has(e.to)) return [];
   const [outer, inner] = view.neighbors.has(e.from) ? [e.from, e.to] : [e.to, e.from];
   if (inner === view.focus) return [];
@@ -407,12 +447,15 @@ function aroundBlockers(e: ViewEdge, [p0, p1]: [Point, Point], rects: Map<string
     .map((id) => rects.get(id)!)
     .filter((r) => segmentHitsRect(p0, p1, r));
   if (!blockers.length) return [];
-  const below = center(rects.get(outer)!).y >= center(rects.get(inner)!).y;
-  const y = below
-    ? Math.max(...blockers.map((r) => r.y + r.h)) + LANE_OFFSET
-    : Math.min(...blockers.map((r) => r.y)) - LANE_OFFSET;
-  const pts = blockers.map((r) => ({ x: r.x + r.w / 2, y }));
-  return pts.sort((a, b) => (p0.x < p1.x ? a.x - b.x : b.x - a.x));
+  // Along is the flow axis toward the neighbor; the lane runs beside the blockers across it.
+  const [along, across] = side === "left" || side === "right" ? (["x", "y"] as const) : (["y", "x"] as const);
+  const size = across === "y" ? "h" : "w";
+  const after = center(rects.get(outer)!)[across] >= center(rects.get(inner)!)[across];
+  const lane = after
+    ? Math.max(...blockers.map((r) => r[across] + r[size])) + LANE_OFFSET
+    : Math.min(...blockers.map((r) => r[across])) - LANE_OFFSET;
+  const pts = blockers.map((r) => center(r)).map((c) => ({ ...c, [across]: lane }));
+  return pts.sort((a, b) => (p0[along] < p1[along] ? a[along] - b[along] : b[along] - a[along]));
 }
 
 /** Which side of each endpoint the edge leaves from / arrives at. */
@@ -452,6 +495,13 @@ function union(rs: Rect[]): Rect {
   const x1 = Math.max(...rs.map((r) => r.x + r.w));
   const y1 = Math.max(...rs.map((r) => r.y + r.h));
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+/** `r` grown about its center to at least the size of `min`. */
+function atLeast(r: Rect, min: Rect): Rect {
+  const w = Math.max(r.w, min.w);
+  const h = Math.max(r.h, min.h);
+  return { x: r.x - (w - r.w) / 2, y: r.y - (h - r.h) / 2, w, h };
 }
 
 function pad(r: Rect, m: number): Rect {

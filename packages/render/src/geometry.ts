@@ -31,9 +31,9 @@ export function labelText(labels: string[]): string {
   return labels.length > 1 ? `${labels[0]} +${labels.length - 1}` : (labels[0] ?? "");
 }
 
-/** Rough rendered width of small (11px) text. */
-export function textWidth(text: string, px = 11): number {
-  return text.length * px * 0.58;
+/** Rough rendered width of small (11px) text, plus any letter spacing. */
+export function textWidth(text: string, px = 11, tracking = 0): number {
+  return text.length * (px * 0.6 + tracking);
 }
 
 /** Children of a box, positioned relative to the top-left of its interior. */
@@ -45,7 +45,7 @@ export interface Interior {
   h: number;
 }
 
-interface InteriorEdge {
+export interface InteriorEdge {
   key: string;
   from: string;
   to: string;
@@ -72,7 +72,18 @@ function computeInterior(ix: Index, id: string, labels: boolean): Interior {
   // Ambient children sit in the frame header, outside the dataflow.
   const nodes = childrenOf(ix, id).filter((c) => !isAmbient(ix, c));
   const edges = internalEdges(ix, id);
-  const layer = assignLayers(nodes, edges.map((e) => [e.from, e.to]));
+  return layoutNodes(ix, nodes, edges, labels, assignLayers(nodes, edges.map((e) => [e.from, e.to])));
+}
+
+/** Lays out `nodes` in the given columns, ordering each column to cut crossings. */
+export function layoutNodes(
+  ix: Index,
+  nodes: string[],
+  edges: InteriorEdge[],
+  labels: boolean,
+  columns: Map<string, number>,
+): Interior {
+  const layer = new Map(columns);
 
   // Edges spanning several layers get a lane node in each layer they cross,
   // so ordering keeps them clear of boxes.
@@ -148,6 +159,42 @@ function computeInterior(ix: Index, id: string, labels: boolean): Interior {
     chain.forEach((n) => rects.delete(n));
   }
   return { rects, bends, w: Math.max(0, x - (gaps.at(-1) ?? 0)), h };
+}
+
+/**
+ * Columns for boxes from different depths under `root`, keeping the order
+ * they have where each is drawn: by column in the root's interior, then by
+ * column inside that box, and so on down.
+ */
+export function nestedLayers(ix: Index, root: string, ids: string[]): Map<string, number> {
+  const path = (id: string) => {
+    const out: number[] = [];
+    for (let cur = id; cur !== root; ) {
+      const p = ix.parent.get(cur);
+      if (p === undefined) break;
+      const r = layoutInterior(ix, p).rects.get(cur);
+      out.unshift(r ? r.x + r.w / 2 : 0);
+      cur = p;
+    }
+    return out;
+  };
+  const paths = new Map(ids.map((id) => [id, path(id)]));
+  const cmp = (a: string, b: string) => {
+    const [pa, pb] = [paths.get(a)!, paths.get(b)!];
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+      if (d) return d;
+    }
+    return 0;
+  };
+  const sorted = [...ids].sort(cmp);
+  const out = new Map<string, number>();
+  let layer = 0;
+  sorted.forEach((id, i) => {
+    if (i && cmp(sorted[i - 1]!, id)) layer++;
+    out.set(id, layer);
+  });
+  return out;
 }
 
 /** Edges between descendants of `id`, lifted to its children and merged. */

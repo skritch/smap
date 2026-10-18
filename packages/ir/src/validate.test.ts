@@ -27,4 +27,15 @@ describe("validate", () => {
       'edge "e1": "to" must be a box id',
     ]);
   });
+
+  it("checks axes, and only warns about the older sentence form", () => {
+    const withAxes = (axes: unknown) =>
+      validate({ startFocus: "a", boxes: { a: { label: "A", side: "in", axes, sources: [], children: [] } }, edges: [] });
+    expect(withAxes({ left: "user", down: "persistence" })).toEqual({ errors: [], warnings: [] });
+    expect(withAxes({ sideways: "?" }).errors).toEqual(['box "a": "axes" must map some of left, right, up, down to non-empty strings']);
+    expect(withAxes("left = user")).toEqual({
+      errors: [],
+      warnings: ['box "a": "axes" is now an object like {"left": "user"}; the sentence is ignored'],
+    });
+  });
 });

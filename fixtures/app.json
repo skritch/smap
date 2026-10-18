@@ -2,7 +2,7 @@
   "startFocus": "app",
   "boxes": {
     "app":      { "label": "App", "summary": "Order service", "side": "in",
-                  "axes": "left = user, right = backend services, down = persistence",
+                  "axes": { "left": "user", "right": "backend services", "down": "persistence" },
                   "sources": ["src/"], "children": ["routes", "logic", "config"] },
     "server":   { "label": "HTTP server", "external": true, "side": "left",  "sources": ["src/main.py"], "children": [] },
     "db":       { "label": "Postgres", "external": true,    "side": "down",  "sources": ["src/db.py"],   "children": [] },

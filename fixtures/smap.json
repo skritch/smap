@@ -2,7 +2,7 @@
   "startFocus": "smap",
   "boxes": {
     "smap":    { "label": "smap", "summary": "Compiles a codebase into a zoomable map", "side": "in",
-                 "axes": "left → right = compile stages (source → IR → map → pixels), up = LLM, down = on-disk state",
+                 "axes": { "left": "earlier stages: source, IR", "right": "later stages: map, pixels", "up": "LLM", "down": "on-disk state" },
                  "sources": ["packages/"], "children": ["compile", "ir", "view"] },
 
     "repo":    { "label": "Target repo", "external": true,    "summary": "The codebase being mapped", "side": "left",  "sources": [], "children": [] },
